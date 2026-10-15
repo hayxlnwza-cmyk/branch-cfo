@@ -8,7 +8,7 @@
 2. **Language = Thai**
 3. **System prompt**: ก๊อปจากไฟล์ (รันใน Terminal แล้ว Cmd+V):
    `python3 -c "import json;print(json.load(open('agents/agent_configs/branch_cfo_advisor.json'))['conversation_config']['agent']['prompt']['prompt'])" | pbcopy`
-4. **First message**: ก๊อปแบบเดียวกัน แต่เปลี่ยน `['prompt']['prompt']` เป็น `['first_message']` (และตัด `['prompt']` ออก: `...['conversation_config']['agent']['first_message']`)
+4. **First message**: `python3 -c "import json;print(json.load(open('agents/agent_configs/branch_cfo_advisor.json'))['conversation_config']['agent']['first_message'])" | pbcopy`
 5. **Voice**: เลือกเสียงที่รองรับภาษาไทย (กรอง Thai ใน Voice library) แล้ว**ฟังเทสต์ประโยคตัวเลข** เช่น "โอกาสรอดลดจาก 77 เปอร์เซ็นต์เหลือ 52 เปอร์เซ็นต์" โมเดล TTS ต้องรองรับไทยจริง ให้ลองรุ่นที่ dashboard ระบุว่ารองรับไทย (เช่น v3 / multilingual) ถ้ารุ่น flash ออกเสียงเพี้ยนให้เปลี่ยนรุ่น
 6. **Tools → Add tool → Webhook (server tool)** เพิ่ม 4 อัน (ชื่อต้องตรง):
 
