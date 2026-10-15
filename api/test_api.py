@@ -199,3 +199,48 @@ def test_thai_branch_name_gives_ascii_ledger_file_and_url(tmp_path, monkeypatch)
     m = c.post("/api/merge", json={"branch_id": r["branch_id"], "reason": "ทดสอบ"}).json()
     assert m["file"].isascii() and m["git"].get("commit") == "abcdef1", m
     assert seen["url"].isascii()
+
+
+# ---- what-if parsing, live events, real data -------------------------------------------------
+import pytest
+
+
+@pytest.mark.parametrize("text", ["ขึ้นราคา 10 เปอร์เซ็นต์", "ลดราคา 10%", "กู้ สองแสน", "จ้างพนักงานเพิ่ม 2 คน",
+                                  "ค่าเช่าเพิ่ม 5000", "ลดต้นทุนวัตถุดิบ 5%", "ยอดขายลด 15%", "ซื้อเครื่อง 150000",
+                                  "ยิงแอด 10000 ต่อเดือน", "เจ้าของใส่เงินเพิ่ม 100000", "ปิดหนี้นอกระบบ",
+                                  "ขึ้นราคา 5% และจ้างคนเพิ่ม 2 คน"])
+def test_parse_many_phrases(text):
+    r = c.post("/api/parse", json={"text": text})
+    assert r.status_code == 200, text
+    assert 0 <= r.json()["branch"]["p_survive"] <= 1
+
+
+def test_parse_unknown_is_helpful_422():
+    r = c.post("/api/parse", json={"text": "สวัสดี"})
+    assert r.status_code == 422 and "ตัวอย่าง" in r.json()["detail"] or "เช่น" in r.json()["detail"]
+
+
+def test_voice_tools_emit_events_and_merge_by_loose_name():
+    o = c.post("/api/tools/create_branch", json={"request_text": "ขึ้นราคา 8 เปอร์เซ็นต์"}).json()
+    assert o["branch_id"]
+    c.get("/api/tools/get_debt_report")
+    ev = c.get("/api/state").json()["events"]
+    assert [e["tool"] for e in ev][-2:] == ["create_branch", "get_debt_report"]
+    m = c.post("/api/tools/merge_branch", json={"branch_id": "ขึ้นราคา", "reason": "test"})
+    assert m.status_code == 200 and m.json()["merged"].startswith("ขึ้นราคา")
+    assert c.get("/api/state").json()["events"][-1]["tool"] == "merge_branch"
+
+
+def test_real_data_roundtrip_and_validation(tmp_path, monkeypatch):
+    import api.main as m
+    monkeypatch.setattr(m, "USER_FILE", tmp_path / "u.json")
+    form = c.get("/api/data").json()["form"]
+    form["business_name"] = "ร้านทดสอบ"
+    assert c.post("/api/data", json=form).status_code == 200
+    s = c.get("/api/state").json()
+    assert s["synthetic"] is False and s["business"]["name"] == "ร้านทดสอบ"
+    bad = dict(form, history=[1, 2, 3])
+    assert c.post("/api/data", json=bad).status_code == 422
+    assert c.post("/api/parse", json={"text": "เปิดสาขาสอง"}).status_code == 200
+    c.post("/api/data/demo")
+    assert c.get("/api/state").json()["synthetic"] is True

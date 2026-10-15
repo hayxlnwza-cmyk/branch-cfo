@@ -26,7 +26,7 @@ def apply_patch(params: dict, patch: dict | None) -> dict:
     p["cash0"] += float(patch.get("cash_delta", 0.0))
     p["g"] += float(patch.get("g_delta", 0.0))
     p["sigma"] = max(1e-6, p["sigma"] + float(patch.get("sigma_delta", 0.0)))
-    p["v"] += float(patch.get("v_delta", 0.0))
+    p["v"] = min(0.99, max(0.0, p["v"] + float(patch.get("v_delta", 0.0))))
     p.setdefault("add_fixed", []).extend(copy.deepcopy(patch.get("add_fixed", [])))
     p.setdefault("add_revenue", []).extend(copy.deepcopy(patch.get("add_revenue", [])))
     p.setdefault("debts", []).extend(copy.deepcopy(patch.get("debts", [])))

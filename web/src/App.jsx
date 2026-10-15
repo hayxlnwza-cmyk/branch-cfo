@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ConversationProvider, useConversationControls, useConversationStatus } from "@elevenlabs/react";
 import { api } from "./api.js";
 import FanChart from "./FanChart.jsx";
+import DataPanel from "./DataPanel.jsx";
+import { ActivityPanel, Toast } from "./Activity.jsx";
 
 const baht = (v) => Math.round(v).toLocaleString("th-TH");
 const pct = (v, d = 0) => `${(v * 100).toFixed(d)}%`;
@@ -29,6 +31,11 @@ function Dashboard() {
   const [cfg, setCfg] = useState({});
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [freshId, setFreshId] = useState(0);
+  const [reason, setReason] = useState("");
+  const lastEv = useRef(null);
+  const cmpId = useRef(null);
   const ver = useRef(-1);
   const prevP = useRef(null);
 
@@ -36,6 +43,23 @@ function Dashboard() {
     const [s, f] = await Promise.all([api.state(), api.forecast()]);
     ver.current = s.version;
     setSt(s);
+    const evs = s.events || [];
+    const maxId = evs.reduce((m, e) => Math.max(m, e.id), 0);
+    if (lastEv.current === null) lastEv.current = maxId;          // first load: don't replay old events
+    else {
+      const fresh = evs.filter((e) => e.id > lastEv.current);
+      lastEv.current = Math.max(lastEv.current, maxId);
+      if (fresh.length) {
+        const last = fresh[fresh.length - 1];
+        setToast(last); setFreshId(last.id);
+        setTimeout(() => setToast((t) => (t && t.id === last.id ? null : t)), 15000);
+        setTimeout(() => setFreshId((x) => (x === last.id ? 0 : x)), 9000);
+        const cb = [...fresh].reverse().find((e) => e.tool === "create_branch");
+        if (cb && cb.data?.branch_id) {            // voice agent made a branch -> show it on screen
+          cmpId.current = cb.data.branch_id;
+        }
+      }
+    }
     if (prevP.current != null && Math.abs(prevP.current - f.p_survive) > 0.001) {
       setFlash(f.p_survive > prevP.current ? "up" : "down");
       setTimeout(() => setFlash(null), 1800);
@@ -43,13 +67,15 @@ function Dashboard() {
     prevP.current = f.p_survive;
     setBase(f);
     setDebt(await api.debt());
-    if (cmp?.branch_id && s.branches[cmp.branch_id]) {
-      const c = await api.compare(cmp.branch_id);
+    const cur = cmpId.current;
+    if (cur && s.branches[cur]) {
+      const c = await api.compare(cur);
       setCmp(c);
       setBranchFc(c.branch);
-    } else if (cmp) { setCmp(null); setBranchFc(null); }
-  }, [cmp?.branch_id]);
+    } else if (cur) { cmpId.current = null; setCmp(null); setBranchFc(null); }
+  }, []);
 
+  useEffect(() => { cmpId.current = cmp?.branch_id || null; }, [cmp]);
   useEffect(() => { api.config().then(setCfg).catch(() => {}); }, []);
   useEffect(() => { refresh().catch((e) => setErr(String(e))); api.backtest().then(setBt).catch(() => {}); }, []);
   useEffect(() => {  // live: voice agent tools mutate server state -> version bumps -> refetch
@@ -62,15 +88,13 @@ function Dashboard() {
   const ask = async (q) => {
     if (!q.trim()) return;
     setBusy(true); setErr("");
-    try { const c = await api.parse(q); setCmp(c); setBranchFc(c.branch); setText(""); await refresh(); }
+    try { const c = await api.parse(q); cmpId.current = c.branch_id; setCmp(c); setBranchFc(c.branch); setText(""); await refresh(); }
     catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
   };
   const merge = async () => {
-    const reason = prompt("เหตุผลที่ตัดสินใจ merge (จะถูกบันทึกลง ledger):", cmp.patch.reason || "");
-    if (reason == null) return;
     setBusy(true);
-    try { const r = await api.merge(cmp.branch_id, reason); setCmp(null); setBranchFc(null); setLender(null); await refresh();
+    try { const r = await api.merge(cmp.branch_id, reason || cmp.patch.reason || ""); setCmp(null); setBranchFc(null); setLender(null); setReason(""); await refresh();
       const g = r.git || {};
       setFlash("commit:" + [r.file, g.error ? "err" : g.via === "github_api" ? "github" : "local", g.error || g.commit || "", g.commit_url || ""].join("|"));
       setTimeout(() => setFlash(null), 30000); }
@@ -89,10 +113,10 @@ function Dashboard() {
           <p className="sub">AI CFO ที่ทำนายอนาคต ลงมือแทน และพิสูจน์ได้</p>
         </div>
         <div className="badges">
-          <span className="badge warn">ข้อมูลตัวอย่างสังเคราะห์</span>
+          {st.synthetic ? <span className="badge warn">ข้อมูลตัวอย่างสังเคราะห์</span> : <span className="badge ok">ข้อมูลจริง: {st.business.name}</span>}
           <span className="badge">engine v{st.engine}</span>
           <span className="badge">{a.n_paths.toLocaleString()} เส้นทาง · seed {a.seed}</span>
-          <button className="ghost" onClick={async () => { await api.reset(); setCmp(null); setBranchFc(null); setLender(null); refresh(); }}>รีเซ็ตเดโม</button>
+          <button className="ghost" onClick={async () => { await api.reset(); setCmp(null); setBranchFc(null); setLender(null); refresh(); }}>{st.synthetic ? "รีเซ็ตเดโม" : "รีเซ็ตการเปลี่ยนแปลง"}</button>
         </div>
       </header>
 
@@ -120,6 +144,8 @@ function Dashboard() {
       </section>
 
       <section className="grid">
+        <ActivityPanel events={st.events} freshId={freshId} />
+        <DataPanel synthetic={st.synthetic} onApplied={async () => { setCmp(null); setBranchFc(null); setLender(null); setBt(null); prevP.current = null; await refresh(); api.backtest().then(setBt).catch(() => {}); }} />
         <div className="card">
           <h2>แตกกิ่ง “ถ้า…”</h2>
           <form onSubmit={(e) => { e.preventDefault(); ask(text); }} className="askrow">
@@ -129,6 +155,10 @@ function Dashboard() {
           <div className="chips">
             {["ถ้าเปิดสาขาสอง", "ถ้าขึ้นราคา 8%", "ถ้ากู้ 200000"].map((q) => (<button key={q} className="chip" onClick={() => ask(q)}>{q}</button>))}
           </div>
+          {Object.keys(st.branches || {}).length > 0 && (
+            <div className="chips"><span className="muted">กิ่งที่มี:</span>
+              {Object.entries(st.branches).map(([id, b]) => (<button key={id} className="chip" onClick={async () => { try { const c = await api.compare(id); cmpId.current = c.branch_id; setCmp(c); setBranchFc(c.branch); } catch (e) { setErr(String(e.message || e)); } }}>{b.name}</button>))}
+            </div>)}
           <Voice agentId={cfg.advisor_agent_id || ADVISOR} label="คุยกับที่ปรึกษา (เสียง)" />
           {err && <div className="err">{err}</div>}
           {cmp && (
@@ -145,6 +175,7 @@ function Dashboard() {
               </table>
               <p className="note">เลขสุ่มชุดเดียวกันทั้งฐานและกิ่ง (common random numbers) · 95% CI ของ ΔP = [{(cmp.delta_p_ci95[0] * 100).toFixed(1)}, {(cmp.delta_p_ci95[1] * 100).toFixed(1)}] จุด</p>
               {cmp.patch.assumptions?.map((s, i) => <p className="note" key={i}>สมมติ: {s}</p>)}
+              <input className="reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="เหตุผลที่ตัดสินใจ merge (บันทึกลง ledger)" />
               <button className="primary" onClick={merge} disabled={busy}>Merge → commit ลง GitHub</button>
             </div>
           )}
@@ -187,11 +218,11 @@ function Dashboard() {
           {bt ? (
             <>
               <div className="kpis">
-                <div><b>{pct(bt.calibration.coverage_80, 1)}</b><span>coverage ช่วง 80% (เป้า 80%) · {bt.calibration.n_points} จุด / {bt.calibration.n_series} ชุดจำลอง</span></div>
-                <div><b>{pct(bt.rolling.coverage_80, 0)}</b><span>rolling บนประวัติ 24 ด. · n={bt.rolling.n_points}</span></div>
-                <div><b>{pct(bt.rolling.mape_median, 1)}</b><span>MAPE มัธยฐาน (seasonal-naive {pct(bt.rolling.mape_seasonal_naive, 1)})</span></div>
+                {bt.calibration && <div><b>{pct(bt.calibration.coverage_80, 1)}</b><span>coverage ช่วง 80% (เป้า 80%) · {bt.calibration.n_points} จุด / {bt.calibration.n_series} ชุดจำลอง{bt.synthetic === false ? " (จำลองจากพารามิเตอร์ที่เรียนรู้)" : ""}</span></div>}
+                {bt.rolling && <div><b>{pct(bt.rolling.coverage_80, 0)}</b><span>ทดสอบย้อนหลังบนประวัติจริง {st.history.length} เดือน · n={bt.rolling.n_points}</span></div>}
+                {bt.rolling && <div><b>{pct(bt.rolling.mape_median, 1)}</b><span>MAPE มัธยฐาน{bt.rolling.mape_seasonal_naive != null ? ` (seasonal-naive ${pct(bt.rolling.mape_seasonal_naive, 1)})` : ""}</span></div>}
               </div>
-              <p className="note">{bt.rolling.note}</p>
+              <p className="note">{bt.rolling ? bt.rolling.note : "ข้อมูลยังน้อยกว่า 18 เดือน จึงยังทดสอบย้อนหลังไม่ได้ (ต้องมีอย่างน้อย 18 เดือน)"}</p>
             </>
           ) : <p className="note">กำลังคำนวณ…</p>}
         </div>
@@ -221,6 +252,7 @@ function Dashboard() {
           </div>
         </div>
       </section>
+      <Toast e={toast} onClose={() => setToast(null)} />
       <footer>{st.notice} · เป็นเครื่องมือวางแผน ไม่ใช่คำแนะนำลงทุน · ตัวเลขทั้งหมดมาจาก engine ไม่ใช่ LLM</footer>
     </div>
   );
@@ -264,23 +296,30 @@ function Collections({ st, base, refresh, collectorId }) {
 }
 
 function CollectCall({ c, agentId }) {
-  return <Voice agentId={agentId} compact label="โทร (web call)" dynamicVariables={{ business_name: "ร้านอาหารตัวอย่าง", customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
+  const before = async () => { const d = await api.guardStart(c.id); return { ok: !!d.allowed, msg: d.reason_th && (d.demo_override || !d.allowed) ? d.reason_th : "" }; };
+  return <Voice agentId={agentId} before={before} compact label="โทร (web call)" dynamicVariables={{ business_name: "ร้านอาหารตัวอย่าง", customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
 }
 
-function Voice({ agentId, label, compact, dynamicVariables }) {
+function Voice({ agentId, label, compact, dynamicVariables, before }) {
   const { startSession, endSession } = useConversationControls();
   const { status } = useConversationStatus();
   const [e, setE] = useState("");
+  const [info, setInfo] = useState("");
   const on = status === "connected" || status === "connecting";
   if (!agentId) return compact ? null : <p className="note">ยังไม่ได้ตั้ง VITE_ELEVENLABS_*_AGENT_ID → ใช้ช่องพิมพ์แทนเสียง (โหมดสำรอง)</p>;
   return (
     <>
-      <button className={on ? "live" : "ghost"} onClick={() => {
+      <button className={on ? "live" : "ghost"} onClick={async () => {
         if (on) return endSession();
-        setE("");
+        setE(""); setInfo("");
+        if (before) {
+          try { const g = await before(); if (!g.ok) { setE(g.msg); return; } if (g.msg) setInfo(g.msg); }
+          catch (x) { setE("ตรวจกฎก่อนโทรไม่สำเร็จ: " + String(x.message || x)); return; }
+        }
         startSession({ agentId, dynamicVariables, onError: (m) => setE(String(m)) });
       }}>{on ? "● วางสาย" : `🎙 ${label}`}</button>
       {e && <span className="err">{e}</span>}
+      {info && <span className="note">{info}</span>}
     </>
   );
 }

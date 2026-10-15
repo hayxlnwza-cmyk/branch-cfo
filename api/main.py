@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -16,11 +17,14 @@ from pydantic import BaseModel
 
 from engine import ENGINE_VERSION, backtest as bt, branch as br, debt as dbt, forecast as fc
 from engine import guardrails as gd, ledger, lender_export, line_summary
-from . import nlpatch
+from . import dataio, nlpatch
 
 ROOT = Path(__file__).resolve().parent.parent
-SEED = json.loads((ROOT / "data" / "seed.json").read_text())
+DEMO_SEED = json.loads((ROOT / "data" / "seed.json").read_text())
+SEED = copy.deepcopy(DEMO_SEED)          # active dataset: synthetic demo until the user enters real data
+USER_FILE = ROOT / "data" / "user_data.json"
 N_PATHS, T, SEED_RNG = 5000, 12, 42
+_EV = [0]                                  # monotonic event counter (never reset)
 
 app = FastAPI(title="Branch CFO", version=ENGINE_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -31,10 +35,35 @@ S: dict = {}
 def reset():
     S.clear()
     S.update(params=copy.deepcopy(SEED["params"]), branches=copy.deepcopy(SEED["branches"]),
-             version=0, bt_cache=None, calls=[], guard=gd.new_state())
+             version=0, bt_cache=None, calls=[], guard=gd.new_state(), events=[], last_branch=None)
 
 
-reset()
+def load_dataset(seed: dict):
+    SEED.clear()
+    SEED.update(copy.deepcopy(seed))
+    reset()
+
+
+if USER_FILE.exists():
+    try:
+        load_dataset(dataio.build(json.loads(USER_FILE.read_text()))[0])
+    except Exception:
+        reset()
+else:
+    reset()
+
+
+def event(tool: str, title: str, data: dict):
+    """Record what a voice agent just did so the web UI can show it live."""
+    _EV[0] += 1
+    S["events"].append(dict(id=_EV[0], at=time.strftime("%H:%M:%S"), tool=tool, title=title, data=data))
+    del S["events"][:-30]
+    S["version"] += 1
+
+
+def _ctx() -> dict:
+    sb = SEED["branches"].get("second-branch") if SEED.get("synthetic") else None
+    return dict(second_branch=sb or dataio.second_branch_template(S["params"]["R0"]), debts=SEED["debts"])
 
 
 def bump():
@@ -50,10 +79,25 @@ def _debtor_ids() -> list:
     return [c["id"] for c in S["params"]["collections"]]
 
 
+def _resolve(bid: str | None) -> str:
+    """Exact id, else a name that contains / is contained in it, else the most recently created branch.
+    (A voice agent rarely repeats the branch id character-for-character.)"""
+    br_ = S["branches"]
+    if bid and bid in br_:
+        return bid
+    q = (bid or "").strip().lower()
+    if q:
+        for k, v in br_.items():
+            n = str(v.get("name", k)).lower()
+            if q in k.lower() or k.lower() in q or q in n or n in q:
+                return k
+    if S.get("last_branch") in br_:
+        return S["last_branch"]
+    raise HTTPException(404, "ยังไม่มีกิ่งให้ใช้ ให้สร้างกิ่งก่อน (เช่น 'ขึ้นราคา 8%')")
+
+
 def _branch(bid: str) -> dict:
-    if bid not in S["branches"]:
-        raise HTTPException(404, f"no branch '{bid}'")
-    return S["branches"][bid]
+    return S["branches"][_resolve(bid)]
 
 
 # ------------------------------------------------------------------ read
@@ -67,7 +111,7 @@ def state():
         assumptions=dict(v=p["v"], F=p["F"], cash0=p["cash0"], min_cash=p["min_cash"], horizon=T, n_paths=N_PATHS, seed=SEED_RNG),
         debts=SEED["debts"], collections=p["collections"],
         branches={k: dict(name=v.get("name", k), reason=v.get("reason", "")) for k, v in S["branches"].items()},
-        ledger=ledger.list_entries(), calls=S["calls"][-10:],
+        ledger=ledger.list_entries(), calls=S["calls"][-10:], events=S["events"][-12:],
     )
 
 
@@ -102,10 +146,14 @@ class CompareReq(BaseModel):
 
 @app.post("/api/compare")
 def compare(req: CompareReq):
-    patch = _branch(req.branch_id) if req.branch_id else nlpatch.validate(req.patch or {})
-    if not req.branch_id:
+    if req.branch_id:
+        req.branch_id = _resolve(req.branch_id)
+        patch = S["branches"][req.branch_id]
+    else:
+        patch = nlpatch.validate(req.patch or {})
         bid = (req.name or patch.get("name") or f"branch-{len(S['branches'])+1}").strip()
         S["branches"][bid] = patch
+        S["last_branch"] = bid
         req.branch_id = bid
         bump()
     out = br.compare(S["params"], patch, N_PATHS, T, SEED_RNG)
@@ -120,12 +168,13 @@ class ParseReq(BaseModel):
 @app.post("/api/parse")
 def parse(req: ParseReq):
     try:
-        res = nlpatch.parse(req.text, S["params"], SEED["branches"])
+        res = nlpatch.parse(req.text, S["params"], _ctx())
     except ValueError as e:
         raise HTTPException(422, str(e))
     patch = res["patch"]
     bid = patch.get("name", "branch")
     S["branches"][bid] = patch
+    S["last_branch"] = bid
     bump()
     out = br.compare(S["params"], patch, N_PATHS, T, SEED_RNG)
     out.update(branch_id=bid, source=res["source"])
@@ -140,9 +189,16 @@ def debt():
 @app.get("/api/backtest")
 def backtest():
     if S["bt_cache"] is None:
-        roll = bt.rolling_backtest(SEED["history"], SEED["business"]["first_month"], H=3, min_train=15)
-        cal = bt.calibration_study(SEED["true_params"], n_series=400, train=18)
-        S["bt_cache"] = dict(rolling=roll, calibration=cal, target_coverage=0.80)
+        h = SEED["history"]
+        roll = bt.rolling_backtest(h, SEED["business"]["first_month"], H=3, min_train=15) if len(h) >= 18 else None
+        if roll and SEED.get("synthetic") is False:
+            roll["note"] = ("ข้อมูลจริงของคุณ: ทดสอบย้อนหลังโดยฝึกจากอดีตแล้วทายเดือนถัด ๆ ไป "
+                            "ยิ่งข้อมูลมากยิ่งน่าเชื่อถือ")
+        try:
+            cal = bt.calibration_study(SEED["true_params"], n_series=400, train=18)
+        except Exception:
+            cal = None
+        S["bt_cache"] = dict(rolling=roll, calibration=cal, target_coverage=0.80, synthetic=bool(SEED.get("synthetic")))
     return S["bt_cache"]
 
 
@@ -199,7 +255,8 @@ class MergeReq(BaseModel):
 @app.post("/api/merge")
 def merge(req: MergeReq):
     with _lock:
-        patch = _branch(req.branch_id)
+        req.branch_id = _resolve(req.branch_id)
+        patch = S["branches"][req.branch_id]
         cmp = br.compare(S["params"], patch, N_PATHS, T, SEED_RNG)
         res = dict(delta_p=cmp["delta_p"], p_base=cmp["base"]["p_survive"], p_branch=cmp["branch"]["p_survive"],
                    min_cash_p5=cmp["branch"]["min_cash_pct"]["p5"], trough_month=cmp["branch"]["trough_month_mode"])
@@ -207,10 +264,11 @@ def merge(req: MergeReq):
                                    req.reason or patch.get("reason", ""), SEED_RNG, N_PATHS, T)
         S["params"] = br.apply_patch(S["params"], patch)
         S["branches"].pop(req.branch_id, None)
+        S["bt_cache"] = None
         git = ledger.commit(entry["file"], f"ledger: merge '{patch.get('name', req.branch_id)}' "
                                            f"(P {res['p_base']:.0%} -> {res['p_branch']:.0%})")
         bump()
-    return dict(file=entry["file"], sha256=entry["sha256"], git=git, result=res)
+    return dict(file=entry["file"], sha256=entry["sha256"], git=git, result=res, merged=patch.get("name", req.branch_id))
 
 
 @app.post("/api/reset")
@@ -261,7 +319,7 @@ def tool_stop_contact(req: StopReq):
         entry = ledger.write_entry("stop-contact", c["name"], S["params"], {}, res,
                                    req.reason or "ลูกหนี้ขอให้หยุดติดต่อ", SEED_RNG, N_PATHS, T)
         git = ledger.commit(entry["file"], f"ledger: stop-contact '{c['name']}'")
-        bump()
+        event("stop_contact", f"{c['name']} ขอให้หยุดติดต่อ", dict(customer=c["name"], reason=req.reason, file=entry["file"], git=git))
     return dict(recorded=True, code="stopped", reason_th=d["reason_th"], file=entry["file"], git=git)
 
 
@@ -286,14 +344,16 @@ def line_weekly():
 
 # ------------------------------------------------------------------ compact tools for the voice agent (server tools)
 class ToolForecast(BaseModel):
-    pass
+    note: str | None = None
 
 
 @app.post("/api/tools/get_forecast")
 def tool_get_forecast(_: ToolForecast | None = None):
     r = fc.run(S["params"], N_PATHS, T, SEED_RNG)
-    return dict(p_survive=round(r["p_survive"], 3), min_cash_p5=round(r["min_cash_pct"]["p5"]),
-                min_cash_p50=round(r["min_cash_pct"]["p50"]), trough_month=r["trough_month_mode"])
+    out = dict(p_survive=round(r["p_survive"], 3), min_cash_p5=round(r["min_cash_pct"]["p5"]),
+               min_cash_p50=round(r["min_cash_pct"]["p50"]), trough_month=r["trough_month_mode"])
+    event("get_forecast", "พยากรณ์โอกาสรอด 12 เดือน", out)
+    return out
 
 
 class ToolBranch(BaseModel):
@@ -303,39 +363,91 @@ class ToolBranch(BaseModel):
 @app.post("/api/tools/create_branch")
 def tool_create_branch(req: ToolBranch):
     o = parse(ParseReq(text=req.request_text))
-    return dict(branch_id=o["branch_id"], p_base=round(o["base"]["p_survive"], 3),
-                p_branch=round(o["branch"]["p_survive"], 3), delta_p=round(o["delta_p"], 3),
-                min_cash_p5_branch=round(o["branch"]["min_cash_pct"]["p5"]),
-                trough_month=o["branch"]["trough_month_mode"])
+    out = dict(branch_id=o["branch_id"], p_base=round(o["base"]["p_survive"], 3),
+               p_branch=round(o["branch"]["p_survive"], 3), delta_p=round(o["delta_p"], 3),
+               min_cash_p5_branch=round(o["branch"]["min_cash_pct"]["p5"]),
+               trough_month=o["branch"]["trough_month_mode"])
+    event("create_branch", f"แตกกิ่ง “{o['patch'].get('name', o['branch_id'])}”",
+          dict(out, name=o["patch"].get("name"), assumptions=o["patch"].get("assumptions", []), request=req.request_text))
+    return out
 
 
 class ToolMerge(BaseModel):
-    branch_id: str
+    branch_id: str | None = None
     reason: str = ""
 
 
 @app.post("/api/tools/merge_branch")
 def tool_merge(req: ToolMerge):
-    return merge(MergeReq(branch_id=req.branch_id, reason=req.reason))
+    r = merge(MergeReq(branch_id=req.branch_id or "", reason=req.reason))
+    event("merge_branch", f"merge “{r['merged']}” เข้า main",
+          dict(name=r["merged"], file=r["file"], git=r["git"], reason=req.reason, **r["result"]))
+    return r
 
 
 @app.get("/api/tools/get_debt_report")
 def tool_debt():
     r = dbt.report(SEED["debts"])
-    return dict(items=[dict(name=i["name"], apr_pct=round(i["apr_nominal"] * 100, 1),
-                            eir_pct=round(i["eir"] * 100, 1), flags=i["flags"],
-                            refinance_monthly_saving=round(i["refinance"]["monthly_cash_change"]))
-                       for i in r["items"]])
+    items = [dict(name=i["name"], apr_pct=round(i["apr_nominal"] * 100, 1),
+                  eir_pct=round(i["eir"] * 100, 1), flags=i["flags"], principal=round(i["principal"]),
+                  monthly_payment=round(i["pmt"]),
+                  refinance_monthly_saving=round(i["refinance"]["monthly_cash_change"]))
+             for i in r["items"]]
+    event("get_debt_report", "รายงานหนี้ (Debt Doctor)", dict(items=items))
+    return dict(items=items)
 
 
 @app.post("/api/tools/record_promise")
 def tool_record_promise(req: OutcomeReq):
-    return collection_outcome(req)
+    r = collection_outcome(req)
+    c = next((x for x in S["params"]["collections"] if x["id"] == req.customer_id), None)
+    event("record_promise", f"ผลสาย: {c['name'] if c else req.customer_id}", dict(r, spoke_to_debtor=req.spoke_to_debtor, note=req.note))
+    return r
 
 
 @app.get("/api/tools/list_debtors")
 def tool_debtors():
-    return dict(debtors=[dict(id=c["id"], name=c["name"], amount=c["amount"]) for c in S["params"]["collections"]])
+    d = [dict(id=c["id"], name=c["name"], amount=c["amount"], expected_month=c["tau"], prob=c["q"]) for c in S["params"]["collections"]]
+    event("list_debtors", "รายชื่อลูกหนี้ค้างชำระ", dict(debtors=d))
+    return dict(debtors=d)
+
+
+# ------------------------------------------------------------------ real business data
+@app.get("/api/data")
+def get_data():
+    return dict(form=dataio.to_form(SEED), synthetic=bool(SEED.get("synthetic")), notice=SEED["notice"])
+
+
+@app.post("/api/data")
+def post_data(form: dict):
+    """Replace the demo with the user's real numbers. Re-fits the revenue model and restarts the session state."""
+    try:
+        seed, warns = dataio.build(form)
+    except dataio.DataError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:
+        raise HTTPException(422, f"ข้อมูลไม่ถูกต้อง: {e}")
+    with _lock:
+        load_dataset(seed)
+        try:
+            USER_FILE.write_text(json.dumps(form, ensure_ascii=False, indent=2), encoding="utf-8")
+            saved = True
+        except Exception:
+            saved = False
+    f = seed["fit"]
+    return dict(ok=True, warnings=warns, saved_on_server=saved,
+                fit=dict(g_monthly=f["g"], sigma=f["sigma"], R0=f["R0"], n_obs=f["n_obs"]))
+
+
+@app.post("/api/data/demo")
+def data_demo():
+    with _lock:
+        try:
+            USER_FILE.unlink()
+        except FileNotFoundError:
+            pass
+        load_dataset(DEMO_SEED)
+    return dict(ok=True)
 
 
 # ------------------------------------------------------------------ static web (after `npm run build`)

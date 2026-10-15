@@ -15,6 +15,11 @@ export const api = {
   outcome: (b) => fetch("/api/collections/outcome", post(b)).then(j),
   merge: (branch_id, reason) => fetch("/api/merge", post({ branch_id, reason })).then(j),
   reset: () => fetch("/api/reset", post({})).then(j),
+  data: () => fetch("/api/data").then(j),
+  saveData: (form) => fetch("/api/data", post(form)).then(j),
+  demoData: () => fetch("/api/data/demo", post({})).then(j),
+  guardStart: (customer_id) => fetch("/api/guard/start_call", post({ customer_id })).then(j),
+  guardrails: () => fetch("/api/guardrails").then(j),
 };
 function post(body) {
   return { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) };
