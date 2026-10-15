@@ -264,7 +264,7 @@ function Collections({ st, base, refresh, collectorId }) {
 }
 
 function CollectCall({ c, agentId }) {
-  return <Voice agentId={agentId} compact label="โทร (web call)" dynamicVariables={{ customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
+  return <Voice agentId={agentId} compact label="โทร (web call)" dynamicVariables={{ business_name: "ร้านอาหารตัวอย่าง", customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
 }
 
 function Voice({ agentId, label, compact, dynamicVariables }) {
