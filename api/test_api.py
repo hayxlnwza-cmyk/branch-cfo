@@ -1,8 +1,20 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app, reset
 
 c = TestClient(app)
+
+
+@pytest.fixture
+def isolate_ledger(tmp_path, monkeypatch):
+    """Tests must never write ledger files into the repo or make git commits."""
+    from engine import ledger as L
+    monkeypatch.setattr(L, "LEDGER_DIR", tmp_path / "ledger")
+    monkeypatch.setattr(L, "ROOT", tmp_path)
+    monkeypatch.setattr(L, "commit", lambda f, m: dict(via="test"))
+    import api.main as M
+    monkeypatch.setattr(M.ledger, "commit", lambda f, m: dict(via="test"))
 
 
 def setup_function(_):
@@ -220,7 +232,7 @@ def test_parse_unknown_is_helpful_422():
     assert r.status_code == 422 and "ตัวอย่าง" in r.json()["detail"] or "เช่น" in r.json()["detail"]
 
 
-def test_voice_tools_emit_events_and_merge_by_loose_name():
+def test_voice_tools_emit_events_and_merge_by_loose_name(isolate_ledger):
     o = c.post("/api/tools/create_branch", json={"request_text": "ขึ้นราคา 8 เปอร์เซ็นต์"}).json()
     assert o["branch_id"]
     c.get("/api/tools/get_debt_report")
