@@ -172,3 +172,30 @@ def test_line_push_request_shape(monkeypatch):
     assert r["sent"] is True and seen["url"].endswith("/v2/bot/message/push")
     assert seen["auth"] == "Bearer tok" and seen["body"]["to"] == "U123"
     assert seen["body"]["messages"][0]["type"] == "text"
+
+
+def test_thai_branch_name_gives_ascii_ledger_file_and_url(tmp_path, monkeypatch):
+    """Regression: Thai names broke the GitHub contents API call ('ascii' codec can't encode...)."""
+    import io, json as _json
+    from engine import ledger
+
+    monkeypatch.setattr(ledger, "ROOT", tmp_path)
+    monkeypatch.setattr(ledger, "LEDGER_DIR", tmp_path / "ledger")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_REPO", "o/r")
+    seen = {}
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def fake(req, timeout=0):
+        req.full_url.encode("ascii")          # what http.client does; raised before the fix
+        seen["url"] = req.full_url
+        return R(_json.dumps({"commit": {"sha": "abcdef123", "html_url": "u"}, "content": {"html_url": "c"}}).encode())
+
+    monkeypatch.setattr(ledger.urllib.request, "urlopen", fake)
+    r = c.post("/api/parse", json={"text": "ถ้าขึ้นราคา 8%"}).json()
+    m = c.post("/api/merge", json={"branch_id": r["branch_id"], "reason": "ทดสอบ"}).json()
+    assert m["file"].isascii() and m["git"].get("commit") == "abcdef1", m
+    assert seen["url"].isascii()

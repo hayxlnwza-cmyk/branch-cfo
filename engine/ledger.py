@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -32,7 +33,11 @@ def input_hash(params, patch, seed, n_paths, T) -> str:
 def write_entry(kind: str, name: str, params, patch, result: dict, reason: str, seed, n_paths, T) -> dict:
     LEDGER_DIR.mkdir(exist_ok=True)
     ts = time.strftime("%Y%m%dT%H%M%S")
-    slug = "".join(ch if ch.isalnum() else "-" for ch in name.lower())[:40] or "entry"
+    # ASCII-only file name: GitHub API URLs / old git tooling choke on Thai characters
+    slug = "".join(ch if (ch.isascii() and ch.isalnum()) else "-" for ch in name.lower()).strip("-")[:40]
+    slug = "-".join(part for part in slug.split("-") if part)
+    if len(slug) < 3:
+        slug = (slug + "-" if slug else "") + hashlib.sha1(name.encode()).hexdigest()[:6]
     fname = f"{ts}-{kind}-{slug}.json"
     entry = dict(kind=kind, name=name, reason=reason, engine_version=ENGINE_VERSION,
                  input_sha256=input_hash(params, patch, seed, n_paths, T),
@@ -59,7 +64,7 @@ def commit(rel_file: str, message: str) -> dict:
                 content=base64.b64encode((ROOT / rel_file).read_bytes()).decode(),
                 committer=dict(name="Branch CFO", email="branch-cfo@users.noreply.github.com"))).encode()
             req = urllib.request.Request(
-                f"https://api.github.com/repos/{repo}/contents/{rel_file}", body, method="PUT",
+                f"https://api.github.com/repos/{repo}/contents/{urllib.parse.quote(rel_file)}", body, method="PUT",
                 headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
                          "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
                          "User-Agent": "branch-cfo"})
