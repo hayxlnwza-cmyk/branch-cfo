@@ -71,7 +71,9 @@ function Dashboard() {
     if (reason == null) return;
     setBusy(true);
     try { const r = await api.merge(cmp.branch_id, reason); setCmp(null); setBranchFc(null); setLender(null); await refresh();
-      setFlash("commit:" + r.file); setTimeout(() => setFlash(null), 6000); }
+      const g = r.git || {};
+      setFlash("commit:" + [r.file, g.error ? "err" : g.via === "github_api" ? "github" : "local", g.error || g.commit || "", g.commit_url || ""].join("|"));
+      setTimeout(() => setFlash(null), 30000); }
     catch (e) { setErr(String(e.message || e)); }
     setBusy(false);
   };
@@ -146,7 +148,19 @@ function Dashboard() {
               <button className="primary" onClick={merge} disabled={busy}>Merge → commit ลง GitHub</button>
             </div>
           )}
-          {flash?.startsWith?.("commit:") && <div className="commit">✓ บันทึกแล้ว <code>{flash.slice(7)}</code></div>}
+          {flash?.startsWith?.("commit:") && (() => {
+            const [file, kind, info, url] = flash.slice(7).split("|");
+            return (
+              <div className="commit">
+                ✓ บันทึกหลักฐานแล้ว <code>{file}</code>
+                <div>
+                  {kind === "github" && <>ขึ้น GitHub แล้ว: <a href={url} target="_blank" rel="noreferrer">commit {info}</a></>}
+                  {kind === "local" && "บันทึกในเซิร์ฟเวอร์เท่านั้น ยังไม่ขึ้น GitHub (ยังไม่ได้ตั้ง GITHUB_TOKEN / GITHUB_REPO)"}
+                  {kind === "err" && <>✗ ขึ้น GitHub ไม่สำเร็จ: <code>{info}</code></>}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <div className="card">
