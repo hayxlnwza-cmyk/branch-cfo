@@ -18,8 +18,12 @@ cd web && npm install && npm run dev          # UI ที่ :5173 (proxy /api �
 |---|---|
 | `VITE_ELEVENLABS_ADVISOR_AGENT_ID`, `VITE_ELEVENLABS_COLLECTOR_AGENT_ID` (web/.env) | เปิดปุ่มคุยเสียง/โทรตามเงิน ถ้าไม่ตั้ง UI ใช้ช่องพิมพ์ + ปุ่ม "จำลองผลสาย" แทน |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | ให้ LLM แปลประโยค "ถ้า..." ที่ rule ไม่รู้จัก (ผ่าน whitelist + ขอบเขตค่า) |
-| `GITHUB_TOKEN`, `GITHUB_REPO` | หลัง merge จะ `git push` ledger ขึ้น GitHub ทันที (ไม่ตั้ง = commit ในเครื่องอย่างเดียว) |
+| `GITHUB_TOKEN`, `GITHUB_REPO` | หลัง merge จะสร้างไฟล์ ledger บน GitHub ผ่าน contents API ทันที (fine-grained token สิทธิ์ Contents read/write) ไม่ตั้ง = commit ในเครื่องอย่างเดียว |
+| `ELEVENLABS_ADVISOR_AGENT_ID`, `ELEVENLABS_COLLECTOR_AGENT_ID` | (ฝั่งเซิร์ฟเวอร์/Render) เว็บอ่านจาก `/api/config` ไม่ต้อง build ใหม่ |
 | `ELEVENLABS_API_KEY`, `API_BASE` | deploy เอเจนต์ด้วย CLI (`.github/workflows/deploy-agent.yml`) |
+
+## Deploy
+`render.yaml` พร้อมใช้ (Blueprint) หรือสร้าง Web Service เอง: build `pip install -r requirements.txt`, start `uvicorn api.main:app --host 0.0.0.0 --port $PORT` (`web/dist` commit ไว้แล้ว ไม่ต้องใช้ Node) · เอกสารอื่น: `docs/VOICE_SETUP.md` (ตั้งเสียง), `docs/DEMO_RUNBOOK.md` (สคริปต์+คำถามกรรมการ), `docs/DESIGN_HANDOFF.md` (ส่งดีไซน์จาก Canva)
 
 ## ต่อ ElevenLabs
 1. เปิด tunnel ให้ API เข้าถึงได้จากภายนอก (`cloudflared tunnel --url http://localhost:8000` หรือ ngrok)

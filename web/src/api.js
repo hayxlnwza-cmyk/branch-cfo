@@ -4,6 +4,7 @@ const j = async (r) => {
 };
 export const api = {
   state: () => fetch("/api/state").then(j),
+  config: () => fetch("/api/config").then(j),
   version: () => fetch("/api/version").then(j),
   forecast: (branch) => fetch("/api/forecast" + (branch ? `?branch=${encodeURIComponent(branch)}` : "")).then(j),
   parse: (text) => fetch("/api/parse", post({ text })).then(j),

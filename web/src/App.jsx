@@ -26,6 +26,7 @@ function Dashboard() {
   const [branchFc, setBranchFc] = useState(null);
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
+  const [cfg, setCfg] = useState({});
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState(null);
   const ver = useRef(-1);
@@ -49,6 +50,7 @@ function Dashboard() {
     } else if (cmp) { setCmp(null); setBranchFc(null); }
   }, [cmp?.branch_id]);
 
+  useEffect(() => { api.config().then(setCfg).catch(() => {}); }, []);
   useEffect(() => { refresh().catch((e) => setErr(String(e))); api.backtest().then(setBt).catch(() => {}); }, []);
   useEffect(() => {  // live: voice agent tools mutate server state -> version bumps -> refetch
     const id = setInterval(async () => {
@@ -125,7 +127,7 @@ function Dashboard() {
           <div className="chips">
             {["ถ้าเปิดสาขาสอง", "ถ้าขึ้นราคา 8%", "ถ้ากู้ 200000"].map((q) => (<button key={q} className="chip" onClick={() => ask(q)}>{q}</button>))}
           </div>
-          <Voice agentId={ADVISOR} label="คุยกับที่ปรึกษา (เสียง)" />
+          <Voice agentId={cfg.advisor_agent_id || ADVISOR} label="คุยกับที่ปรึกษา (เสียง)" />
           {err && <div className="err">{err}</div>}
           {cmp && (
             <div className="diff">
@@ -164,7 +166,7 @@ function Dashboard() {
           <p className="note">APR จริงแก้จาก P = PMT·(1−(1+i)^−n)/i · {debt?.note}</p>
         </div>
 
-        <Collections st={st} base={base} refresh={refresh} />
+        <Collections st={st} base={base} refresh={refresh} collectorId={cfg.collector_agent_id || COLLECTOR} />
 
         <div className="card">
           <h2>Backtest: แม่นแค่ไหน</h2>
@@ -210,7 +212,7 @@ function Dashboard() {
   );
 }
 
-function Collections({ st, base, refresh }) {
+function Collections({ st, base, refresh, collectorId }) {
   const [promise, setPromise] = useState({});
   const [msg, setMsg] = useState("");
   const [log, setLog] = useState([]);
@@ -230,7 +232,7 @@ function Collections({ st, base, refresh }) {
             <tr key={c.id}>
               <td>{c.name}</td><td>{baht(c.amount)}</td><td>เดือนที่ {c.tau}</td><td>{pct(c.q)}</td>
               <td className="act">
-                <CollectCall c={c} />
+                <CollectCall c={c} agentId={collectorId} />
                 <select value={promise[c.id] ?? 1} onChange={(e) => setPromise({ ...promise, [c.id]: e.target.value })}>
                   {[1, 2, 3, 4].map((m) => <option key={m} value={m}>สัญญาเดือน {m}</option>)}
                 </select>
@@ -247,8 +249,8 @@ function Collections({ st, base, refresh }) {
   );
 }
 
-function CollectCall({ c }) {
-  return <Voice agentId={COLLECTOR} compact label="โทร (web call)" dynamicVariables={{ customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
+function CollectCall({ c, agentId }) {
+  return <Voice agentId={agentId} compact label="โทร (web call)" dynamicVariables={{ customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
 }
 
 function Voice({ agentId, label, compact, dynamicVariables }) {

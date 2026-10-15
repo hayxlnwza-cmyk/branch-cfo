@@ -45,24 +45,40 @@ def write_entry(kind: str, name: str, params, patch, result: dict, reason: str, 
 
 
 def commit(rel_file: str, message: str) -> dict:
-    """Local git commit (always) + GitHub contents API push if GITHUB_TOKEN & GITHUB_REPO are set."""
-    out = {}
+    """Publish a ledger file.
+
+    * GITHUB_TOKEN + GITHUB_REPO set (hosted demo, e.g. Render): create the file via the GitHub contents API
+      -> the commit appears on GitHub live. Token needs 'Contents: read & write' on that repo.
+    * otherwise: local git commit (works on a dev machine).
+    """
+    tok, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPO")
+    if tok and repo:
+        try:
+            body = json.dumps(dict(
+                message=message, branch=os.getenv("GITHUB_BRANCH", "main"),
+                content=base64.b64encode((ROOT / rel_file).read_bytes()).decode(),
+                committer=dict(name="Branch CFO", email="branch-cfo@users.noreply.github.com"))).encode()
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{repo}/contents/{rel_file}", body, method="PUT",
+                headers={"Authorization": f"Bearer {tok}", "Accept": "application/vnd.github+json",
+                         "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
+                         "User-Agent": "branch-cfo"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                res = json.loads(r.read())
+            return dict(via="github_api", commit=res["commit"]["sha"][:7], url=res["content"]["html_url"],
+                        commit_url=res["commit"]["html_url"])
+        except Exception as e:
+            return dict(via="github_api", error=str(e)[:200])
+    out = dict(via="local_git")
     try:
+        ident = ["-c", "user.name=Branch CFO", "-c", "user.email=branch-cfo@users.noreply.github.com"]
         subprocess.run(["git", "add", rel_file], cwd=ROOT, check=True, capture_output=True)
-        r = subprocess.run(["git", "commit", "-m", message], cwd=ROOT, capture_output=True, text=True)
+        r = subprocess.run(["git", *ident, "commit", "-m", message], cwd=ROOT, capture_output=True, text=True)
         out["git"] = (r.stdout or r.stderr).strip().splitlines()[:1]
         out["commit"] = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                                        capture_output=True, text=True).stdout.strip()
     except Exception as e:  # pragma: no cover
         out["git_error"] = str(e)
-    tok, repo = os.getenv("GITHUB_TOKEN"), os.getenv("GITHUB_REPO")
-    if tok and repo and os.getenv("LEDGER_PUSH", "1") == "1":
-        try:
-            r = subprocess.run(["git", "push"], cwd=ROOT, capture_output=True, text=True, timeout=30)
-            out["push"] = "ok" if r.returncode == 0 else r.stderr.strip()[:200]
-            out["url"] = f"https://github.com/{repo}/blob/main/{rel_file}"
-        except Exception as e:  # pragma: no cover
-            out["push_error"] = str(e)
     return out
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -58,6 +59,18 @@ def state():
         branches={k: dict(name=v.get("name", k), reason=v.get("reason", "")) for k, v in S["branches"].items()},
         ledger=ledger.list_entries(), calls=S["calls"][-10:],
     )
+
+
+@app.get("/api/health")
+def health():
+    return dict(ok=True, engine=ENGINE_VERSION)
+
+
+@app.get("/api/config")
+def config():
+    """Runtime config for the web app (agent IDs are public identifiers; set them as env vars on the host)."""
+    return dict(advisor_agent_id=os.getenv("ELEVENLABS_ADVISOR_AGENT_ID", ""),
+                collector_agent_id=os.getenv("ELEVENLABS_COLLECTOR_AGENT_ID", ""))
 
 
 @app.get("/api/version")

@@ -61,3 +61,37 @@ def test_merge_writes_ledger_and_git_commit(tmp_path, monkeypatch):
     assert exp["ledger"] and len(exp["export_sha256"]) == 64
     log = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path, capture_output=True, text=True).stdout
     assert "ledger: merge" in log
+
+
+def test_health_and_config(monkeypatch):
+    assert c.get("/api/health").json()["ok"] is True
+    monkeypatch.setenv("ELEVENLABS_ADVISOR_AGENT_ID", "agent_x")
+    cfg = c.get("/api/config").json()
+    assert cfg["advisor_agent_id"] == "agent_x" and cfg["collector_agent_id"] == ""
+
+
+def test_ledger_commit_via_github_api(tmp_path, monkeypatch):
+    import io, json as _json
+    from engine import ledger
+
+    f = tmp_path / "ledger" / "x.json"
+    f.parent.mkdir()
+    f.write_text("{}")
+    monkeypatch.setattr(ledger, "ROOT", tmp_path)
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setenv("GITHUB_REPO", "o/r")
+    seen = {}
+
+    class R(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def fake(req, timeout=0):
+        seen["url"], seen["auth"], seen["body"] = req.full_url, req.headers["Authorization"], _json.loads(req.data)
+        return R(_json.dumps({"commit": {"sha": "abcdef123", "html_url": "c"}, "content": {"html_url": "u"}}).encode())
+
+    monkeypatch.setattr(ledger.urllib.request, "urlopen", fake)
+    out = ledger.commit("ledger/x.json", "msg")
+    assert out["via"] == "github_api" and out["commit"] == "abcdef1"
+    assert seen["url"].endswith("/repos/o/r/contents/ledger/x.json") and seen["auth"] == "Bearer t"
+    assert seen["body"]["branch"] == "main" and seen["body"]["content"]
