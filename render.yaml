@@ -14,3 +14,13 @@ services:
         sync: false
       - key: ELEVENLABS_COLLECTOR_AGENT_ID
         sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        value: hayxlnwza-cmyk/branch-cfo
+      - key: GUARD_DEMO
+        value: "1"          # synthetic demo only: hours/quota blocks are lifted but always labelled. Set "0" for real use.
+      - key: LINE_CHANNEL_TOKEN
+        sync: false
+      - key: LINE_USER_ID
+        sync: false

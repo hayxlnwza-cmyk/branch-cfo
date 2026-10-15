@@ -97,6 +97,35 @@
           "note": {
             "type": "string",
             "description": "สรุปสั้นๆ ของบทสนทนา"
+          },
+          "spoke_to_debtor": {
+            "type": "boolean",
+            "description": "true ถ้าคุยกับตัวลูกหนี้เอง false ถ้าคนอื่นรับสาย (ระบบจะไม่บันทึกและไม่เปิดเผยเรื่องหนี้)"
+          }
+        },
+        "required": [
+          "customer_id"
+        ]
+      }
+    }
+  },
+  {
+    "name": "stop_contact",
+    "description": "เรียกทันทีเมื่อลูกหนี้ขอให้หยุดโทรหรือหยุดติดต่อ ระบบจะห้ามโทรอีกถาวรและบันทึกหลักฐาน",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/stop_contact",
+      "method": "POST",
+      "request_body_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "รหัสลูกหนี้ เช่น c1"
+          },
+          "reason": {
+            "type": "string",
+            "description": "คำพูดของลูกหนี้ที่ขอให้หยุด"
           }
         },
         "required": [

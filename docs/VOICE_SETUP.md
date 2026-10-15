@@ -27,7 +27,7 @@
 1. สร้างเอเจนต์ใหม่ `Branch CFO Collector` ภาษาไทย เลือกเสียงเดียวกันหรือเสียงอื่น
 2. System prompt / First message จาก `agents/agent_configs/branch_cfo_collector.json` (วิธีเดียวกับข้อ A.3–A.4)
 3. **Dynamic variables** ประกาศ 4 ตัว: `business_name`, `customer_name`, `amount`, `customer_id` (เว็บส่งค่าให้เองตอนกดโทร)
-4. เพิ่ม webhook tool `record_promise` (POST `.../api/tools/record_promise`) body: `customer_id` (string, required), `promised_month` (integer), `confidence` (number), `note` (string)
+4. เพิ่ม webhook tool `record_promise` (POST `.../api/tools/record_promise`) body: `customer_id` (string, required), `promised_month` (integer), `confidence` (number), `note` (string), `spoke_to_debtor` (boolean)
 5. ทดสอบใน dashboard: ใส่ค่า dynamic variables เช่น `customer_id=c1`, พูดเป็นลูกหนี้ "ขอจ่ายเดือนหน้าครับ" → หน้าเว็บ (เปิดค้าง) ต้องเห็นโอกาสรอดขยับขึ้นเอง
 6. คัดลอก Agent ID ตัวที่สอง
 
@@ -47,3 +47,14 @@
 ## ถ้าเสียงไม่ผ่าน
 - ใช้ช่องพิมพ์ + ปุ่ม "จำลองผลสาย" ในเว็บ (ตัวเลขเดียวกันทุกอย่าง) และเปิดวิดีโอสำรองที่อัดไว้
 - เช็ค Render → **Logs**: ต้องเห็น `POST /api/tools/...` เมื่อเอเจนต์เรียก tool ถ้าไม่เห็น = webhook URL ผิด หรือเซิร์ฟเวอร์หลับ
+
+## E. Guardrail ในโค้ด (เพิ่มใหม่ตามคำแนะนำของครู)
+- เพิ่ม webhook tool `stop_contact` (POST `.../api/tools/stop_contact`) body: `customer_id` (string, required), `reason` (string) แล้วใส่ใน tool ของ Collector ด้วย: ลูกหนี้ขอหยุด = ระบบห้ามโทรถาวรและเขียนหลักฐานลง ledger
+- เว็บต้องเรียก `POST /api/guard/start_call` ก่อนเปิดสาย ถ้า `allowed:false` ห้ามเริ่มสาย แล้วแสดง `reason_th`
+- `GET /api/guardrails` ให้กฎ สถานะลูกหนี้แต่ละราย รายชื่อที่ขอหยุด และ audit log สำหรับแผง "ขอบเขตความปลอดภัย"
+- เดโมนอกเวลา 08:00-20:00: Render ตั้ง `GUARD_DEMO=1` ไว้แล้ว (ใช้ได้เฉพาะข้อมูลสังเคราะห์) ระบบจะอนุญาตแต่ติดป้าย "โหมดเดโม ปกติจะถูกบล็อก" ให้เห็นชัด ถ้าอยากโชว์การบล็อกจริงให้ส่ง `at` เช่น `2026-10-15T22:00:00+07:00`
+- ช่วงเวลาและโควตาเป็นค่าเริ่มต้นจากความเข้าใจของทีม ยังไม่ผ่านผู้รู้ด้านกฎหมาย
+
+## F. สรุปรายสัปดาห์ผ่าน LINE (ทางเลือก)
+- ดูข้อความตัวอย่างได้เลยโดยไม่ต้องมีบัญชี: `GET /api/line/preview`
+- ส่งจริง: สร้าง LINE Official Account + Messaging API ตั้ง `LINE_CHANNEL_TOKEN` และ `LINE_USER_ID` บน Render แล้วเรียก `POST /api/line/weekly`

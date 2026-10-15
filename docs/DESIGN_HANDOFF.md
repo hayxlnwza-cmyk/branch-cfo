@@ -18,3 +18,13 @@
 
 ## วิธีกันงานชนกัน (ถ้าเพื่อนแก้โค้ดเองด้วย)
 เพื่อนแตก branch ของตัวเอง แก้เฉพาะ `web/` แล้วเปิด PR ห้ามแตะ `engine/` และ `data/seed.json` (เทสต์ผูกกับตัวเลขเดโม) หลังแก้ต้อง `cd web && npm run build` แล้ว commit `web/dist` ด้วย เพราะ Render เสิร์ฟจาก dist ที่ commit ไว้
+
+## ข้อมูลใหม่ที่หน้าเว็บดึงได้ (ให้เพื่อนออกแบบช่องไว้)
+| ส่วน | endpoint | สิ่งที่แสดง |
+|---|---|---|
+| แผง "ขอบเขตความปลอดภัย" | `GET /api/guardrails` | `rules_th` (กฎเป็นข้อๆ), `status[]` (ลูกหนี้แต่ละรายโทรได้ไหมตอนนี้ + `reason_th`), `stopped`, `log[]`, `legal_note_th` |
+| ปุ่มโทร | `POST /api/guard/start_call` | `allowed`, `code`, `reason_th`, `demo_override` ถ้าไม่ผ่านต้องปิดปุ่มและโชว์เหตุผล |
+| ตัวอย่างแชต LINE | `GET /api/line/preview` | `text` ข้อความสรุปรายสัปดาห์ (ออกแบบเป็นบับเบิลแชต) |
+| ปุ่มส่ง LINE | `POST /api/line/weekly` | `sent`, `reason_th` |
+
+รหัสเหตุผล (`code`): `ok`, `outside_hours`, `daily_limit`, `weekly_limit`, `stopped`, `unknown_debtor`, `third_party`

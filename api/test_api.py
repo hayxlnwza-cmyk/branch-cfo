@@ -95,3 +95,80 @@ def test_ledger_commit_via_github_api(tmp_path, monkeypatch):
     assert out["via"] == "github_api" and out["commit"] == "abcdef1"
     assert seen["url"].endswith("/repos/o/r/contents/ledger/x.json") and seen["auth"] == "Bearer t"
     assert seen["body"]["branch"] == "main" and seen["body"]["content"]
+
+
+# ---------------------------------------------------------------- guardrails + LINE
+def test_guard_blocks_outside_hours_when_time_given():
+    r = c.post("/api/guard/start_call", json={"customer_id": "c1", "at": "2026-10-15T22:00:00+07:00"}).json()
+    assert r["allowed"] is False and r["code"] == "outside_hours"
+    ok = c.post("/api/guard/start_call", json={"customer_id": "c2", "at": "2026-10-15T10:00:00+07:00"}).json()
+    assert ok["allowed"] is True
+    g = c.get("/api/guardrails").json()
+    assert len(g["rules_th"]) >= 5 and g["policy"]["verified_by_lawyer"] is False and g["log"]
+
+
+def test_guard_demo_override_follows_env(monkeypatch):
+    from engine import guardrails as gd
+    from datetime import datetime
+    monkeypatch.setattr(gd, "now_th", lambda: datetime(2026, 10, 15, 22, 0, tzinfo=gd.TH))
+    on = c.post("/api/guard/start_call", json={"customer_id": "c1"}).json()
+    assert on["allowed"] and on["demo_override"]
+    reset()
+    monkeypatch.setenv("GUARD_DEMO", "0")
+    off = c.post("/api/guard/start_call", json={"customer_id": "c1"}).json()
+    assert off["allowed"] is False and off["code"] == "outside_hours"
+
+
+def test_third_party_answer_is_not_recorded():
+    before = c.get("/api/forecast").json()["p_survive"]
+    r = c.post("/api/tools/record_promise", json={"customer_id": "c1", "promised_month": 1, "spoke_to_debtor": False}).json()
+    assert r["recorded"] is False and r["code"] == "third_party"
+    assert c.get("/api/forecast").json()["p_survive"] == before
+
+
+def test_stop_contact_blocks_calls_and_promises(tmp_path, monkeypatch):
+    import subprocess
+    from engine import ledger
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    monkeypatch.setattr(ledger, "ROOT", tmp_path)
+    monkeypatch.setattr(ledger, "LEDGER_DIR", tmp_path / "ledger")
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    r = c.post("/api/tools/stop_contact", json={"customer_id": "c1", "reason": "ขอให้หยุดโทร"}).json()
+    assert r["recorded"] and (tmp_path / r["file"]).exists()
+    d = c.post("/api/guard/start_call", json={"customer_id": "c1", "at": "2026-10-15T10:00:00+07:00"}).json()
+    assert d["allowed"] is False and d["code"] == "stopped"
+    p = c.post("/api/tools/record_promise", json={"customer_id": "c1", "promised_month": 1}).json()
+    assert p["recorded"] is False and p["code"] == "stopped"
+
+
+def test_line_preview_uses_engine_numbers_and_never_sends_without_token(monkeypatch):
+    monkeypatch.delenv("LINE_CHANNEL_TOKEN", raising=False)
+    monkeypatch.delenv("LINE_USER_ID", raising=False)
+    f = c.get("/api/forecast").json()["p_survive"]
+    pv = c.get("/api/line/preview").json()
+    assert f"{f:.1%}" in pv["text"] and "213.8%" in pv["text"] and pv["configured"] is False
+    r = c.post("/api/line/weekly").json()
+    assert r["sent"] is False and "LINE_CHANNEL_TOKEN" in r["reason_th"]
+
+
+def test_line_push_request_shape(monkeypatch):
+    import io, json as _json
+    from engine import line_summary as ls
+    monkeypatch.setenv("LINE_CHANNEL_TOKEN", "tok")
+    monkeypatch.setenv("LINE_USER_ID", "U123")
+    seen = {}
+
+    class R(io.BytesIO):
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+
+    def fake(req, timeout=0):
+        seen.update(url=req.full_url, auth=req.headers["Authorization"], body=_json.loads(req.data))
+        return R(b"{}")
+
+    monkeypatch.setattr(ls.urllib.request, "urlopen", fake)
+    r = c.post("/api/line/weekly").json()
+    assert r["sent"] is True and seen["url"].endswith("/v2/bot/message/push")
+    assert seen["auth"] == "Bearer tok" and seen["body"]["to"] == "U123"
+    assert seen["body"]["messages"][0]["type"] == "text"

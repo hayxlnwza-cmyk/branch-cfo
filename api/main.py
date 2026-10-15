@@ -5,6 +5,7 @@ import copy
 import json
 import os
 import threading
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -14,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from engine import ENGINE_VERSION, backtest as bt, branch as br, debt as dbt, forecast as fc
-from engine import ledger, lender_export
+from engine import guardrails as gd, ledger, lender_export, line_summary
 from . import nlpatch
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,7 +31,7 @@ S: dict = {}
 def reset():
     S.clear()
     S.update(params=copy.deepcopy(SEED["params"]), branches=copy.deepcopy(SEED["branches"]),
-             version=0, bt_cache=None, calls=[])
+             version=0, bt_cache=None, calls=[], guard=gd.new_state())
 
 
 reset()
@@ -38,6 +39,15 @@ reset()
 
 def bump():
     S["version"] += 1
+
+
+def _demo_override() -> bool:
+    """Hours/quota blocks may be lifted ONLY on synthetic demo data, and the decision says so explicitly."""
+    return bool(SEED.get("synthetic")) and os.getenv("GUARD_DEMO", "1") != "0"
+
+
+def _debtor_ids() -> list:
+    return [c["id"] for c in S["params"]["collections"]]
 
 
 def _branch(bid: str) -> dict:
@@ -147,6 +157,7 @@ class OutcomeReq(BaseModel):
     promised_month: int | None = None   # months from now (1..12); None = refused / no commitment
     confidence: float | None = None     # agent's estimate that promise is kept; default 0.75
     note: str | None = None
+    spoke_to_debtor: bool = True        # False = someone else answered -> nothing is recorded or disclosed
 
 
 @app.post("/api/collections/outcome")
@@ -156,6 +167,15 @@ def collection_outcome(req: OutcomeReq):
         c = next((x for x in S["params"]["collections"] if x["id"] == req.customer_id), None)
         if c is None:
             raise HTTPException(404, "unknown customer")
+        if not req.spoke_to_debtor:
+            d = dict(customer_id=c["id"], allowed=False, code="third_party",
+                     reason_th="ผู้รับสายไม่ใช่ลูกหนี้ ไม่บันทึกผลและไม่เปิดเผยเรื่องหนี้")
+            gd.audit(S["guard"], "record_blocked", d)
+            return dict(recorded=False, code=d["code"], reason_th=d["reason_th"])
+        if c["id"] in S["guard"]["stop"]:
+            d = dict(customer_id=c["id"], allowed=False, code="stopped", reason_th="ลูกหนี้ขอให้หยุดติดต่อแล้ว")
+            gd.audit(S["guard"], "record_blocked", d)
+            return dict(recorded=False, code=d["code"], reason_th=d["reason_th"])
         before = fc.run(S["params"], N_PATHS, T, SEED_RNG)["p_survive"]
         old = dict(tau=c["tau"], q=c["q"])
         if req.promised_month is not None:
@@ -167,7 +187,7 @@ def collection_outcome(req: OutcomeReq):
         S["calls"].append(dict(customer_id=c["id"], name=c["name"], old=old, new=dict(tau=c["tau"], q=c["q"]),
                                p_before=before, p_after=after, note=req.note))
         bump()
-    return dict(customer=c["name"], old=old, new=dict(tau=c["tau"], q=c["q"]),
+    return dict(recorded=True, customer=c["name"], old=old, new=dict(tau=c["tau"], q=c["q"]),
                 p_survive_before=before, p_survive_after=after)
 
 
@@ -197,6 +217,71 @@ def merge(req: MergeReq):
 def reset_api():
     reset()
     return dict(ok=True)
+
+
+# ------------------------------------------------------------------ guardrails (enforced in code)
+@app.get("/api/guardrails")
+def guardrails():
+    """Rules, per-debtor 'may we call now?' status, stop list and audit log (for the safety panel)."""
+    return dict(gd.snapshot(gd.policy_from_env(), S["guard"], _debtor_ids()), demo_override=_demo_override())
+
+
+class StartCallReq(BaseModel):
+    customer_id: str
+    at: str | None = None   # ISO time, only to demonstrate/test the hour rule (e.g. "2026-10-15T22:00:00+07:00")
+
+
+@app.post("/api/guard/start_call")
+def guard_start_call(req: StartCallReq):
+    """The web app calls this BEFORE opening a voice session. Refused = the call button must not start a call."""
+    with _lock:
+        now = datetime.fromisoformat(req.at) if req.at else None
+        if now is not None and now.tzinfo is None:
+            now = now.replace(tzinfo=gd.TH)
+        d = gd.start_call(gd.policy_from_env(), S["guard"], req.customer_id, set(_debtor_ids()), now,
+                          demo_override=_demo_override() and req.at is None)
+        bump()
+    return d
+
+
+class StopReq(BaseModel):
+    customer_id: str
+    reason: str = ""
+
+
+@app.post("/api/tools/stop_contact")
+def tool_stop_contact(req: StopReq):
+    """Agent tool: debtor asked us to stop calling. Permanent, logged in the evidence ledger."""
+    with _lock:
+        c = next((x for x in S["params"]["collections"] if x["id"] == req.customer_id), None)
+        if c is None:
+            raise HTTPException(404, "unknown customer")
+        d = gd.request_stop(S["guard"], c["id"], req.reason)
+        res = dict(customer_id=c["id"], stopped_at=d["at"])
+        entry = ledger.write_entry("stop-contact", c["name"], S["params"], {}, res,
+                                   req.reason or "ลูกหนี้ขอให้หยุดติดต่อ", SEED_RNG, N_PATHS, T)
+        git = ledger.commit(entry["file"], f"ledger: stop-contact '{c['name']}'")
+        bump()
+    return dict(recorded=True, code="stopped", reason_th=d["reason_th"], file=entry["file"], git=git)
+
+
+# ------------------------------------------------------------------ LINE weekly summary
+def _line_msg() -> dict:
+    return line_summary.build(S["params"], SEED["debts"], SEED["business"].get("name", "ร้านของคุณ"),
+                              bool(SEED.get("synthetic")), N_PATHS, T, SEED_RNG)
+
+
+@app.get("/api/line/preview")
+def line_preview():
+    """Exact text that would be pushed to LINE (works with no LINE account)."""
+    m = _line_msg()
+    return dict(text=m["text"], configured=bool(os.getenv("LINE_CHANNEL_TOKEN") and os.getenv("LINE_USER_ID")))
+
+
+@app.post("/api/line/weekly")
+def line_weekly():
+    m = _line_msg()
+    return dict(text=m["text"], **line_summary.send_weekly(m))
 
 
 # ------------------------------------------------------------------ compact tools for the voice agent (server tools)
