@@ -1,0 +1,13 @@
+name: agent-tests
+on:
+  pull_request:
+    paths: ["agents/**", "scripts/lint_agents.py"]
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Prompt guardrail lint (AI disclosure, no threats, tool use)
+        run: python scripts/lint_agents.py

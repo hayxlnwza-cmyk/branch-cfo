@@ -1,0 +1,23 @@
+name: deploy-agent
+on:
+  push:
+    branches: [main]
+    paths: ["agents/**"]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      API_BASE: ${{ secrets.API_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: python scripts/lint_agents.py && python scripts/render_agents.py
+      - run: npm install -g @elevenlabs/cli
+      - name: Preview, deploy, verify
+        working-directory: agents
+        run: |
+          elevenlabs agents push --dry-run
+          elevenlabs agents push
+          elevenlabs agents status

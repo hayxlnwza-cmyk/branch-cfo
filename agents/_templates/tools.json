@@ -1,0 +1,108 @@
+[
+  {
+    "name": "get_forecast",
+    "description": "ดึงโอกาสรอด 12 เดือนและเงินสดต่ำสุดของธุรกิจตอนนี้ ใช้ทุกครั้งก่อนพูดตัวเลข",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/get_forecast",
+      "method": "POST"
+    }
+  },
+  {
+    "name": "create_branch",
+    "description": "แตกกิ่งสถานการณ์ 'ถ้า...' จากคำพูดของเจ้าของ แล้วคืนโอกาสรอดฐานเทียบกิ่ง (เช่น 'เปิดสาขาสอง', 'ขึ้นราคา 8%', 'กู้ 200000')",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/create_branch",
+      "method": "POST",
+      "request_body_schema": {
+        "type": "object",
+        "properties": {
+          "request_text": {
+            "type": "string",
+            "description": "คำพูดของเจ้าของที่ขึ้นต้นด้วย ถ้า... แบบคำต่อคำ"
+          }
+        },
+        "required": [
+          "request_text"
+        ]
+      }
+    }
+  },
+  {
+    "name": "merge_branch",
+    "description": "ยอมรับ (merge) กิ่งเป็นแผนจริงและบันทึกหลักฐานลง GitHub เรียกเมื่อเจ้าของยืนยันด้วยวาจาแล้วเท่านั้น",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/merge_branch",
+      "method": "POST",
+      "request_body_schema": {
+        "type": "object",
+        "properties": {
+          "branch_id": {
+            "type": "string",
+            "description": "branch_id ที่ได้จาก create_branch"
+          },
+          "reason": {
+            "type": "string",
+            "description": "เหตุผลที่เจ้าของตัดสินใจ ตามคำพูดเจ้าของ"
+          }
+        },
+        "required": [
+          "branch_id"
+        ]
+      }
+    }
+  },
+  {
+    "name": "get_debt_report",
+    "description": "รายงานหนี้: APR/EIR จริง ธงเกินเพดาน และเงินที่ประหยัดได้ถ้ารีไฟแนนซ์",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/get_debt_report",
+      "method": "GET"
+    }
+  },
+  {
+    "name": "list_debtors",
+    "description": "รายชื่อลูกหนี้ที่ค้างจ่ายพร้อมรหัสและยอด",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/list_debtors",
+      "method": "GET"
+    }
+  },
+  {
+    "name": "record_promise",
+    "description": "บันทึกผลการโทรตามเงิน: เดือนที่ลูกหนี้สัญญาว่าจะจ่าย (1-12 นับจากเดือนหน้า) ถ้าปฏิเสธหรือไม่ให้วันที่ให้ละ promised_month",
+    "type": "webhook",
+    "api_schema": {
+      "url": "{{API_BASE}}/api/tools/record_promise",
+      "method": "POST",
+      "request_body_schema": {
+        "type": "object",
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "description": "รหัสลูกหนี้ เช่น c1"
+          },
+          "promised_month": {
+            "type": "integer",
+            "description": "เดือนที่สัญญาจะจ่าย 1-12 นับจากเดือนหน้า"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "ความมั่นใจ 0-1 ว่าจะรักษาสัญญา (น้ำเสียง/ความชัดเจน)"
+          },
+          "note": {
+            "type": "string",
+            "description": "สรุปสั้นๆ ของบทสนทนา"
+          }
+        },
+        "required": [
+          "customer_id"
+        ]
+      }
+    }
+  }
+]
