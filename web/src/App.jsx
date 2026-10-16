@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import FanChart from "./FanChart.jsx";
 import DataPanel from "./DataPanel.jsx";
 import { ActivityPanel, Toast } from "./Activity.jsx";
+import { TranscriptWindow, transcriptHandlers } from "./Transcript.jsx";
 
 const baht = (v) => Math.round(v).toLocaleString("th-TH");
 const pct = (v, d = 0) => `${(v * 100).toFixed(d)}%`;
@@ -253,6 +254,7 @@ function Dashboard() {
         </div>
       </section>
       <Toast e={toast} onClose={() => setToast(null)} />
+      <TranscriptWindow />
       <footer>{st.notice} · เป็นเครื่องมือวางแผน ไม่ใช่คำแนะนำลงทุน · ตัวเลขทั้งหมดมาจาก engine ไม่ใช่ LLM</footer>
     </div>
   );
@@ -316,7 +318,7 @@ function Voice({ agentId, label, compact, dynamicVariables, before }) {
           try { const g = await before(); if (!g.ok) { setE(g.msg); return; } if (g.msg) setInfo(g.msg); }
           catch (x) { setE("ตรวจกฎก่อนโทรไม่สำเร็จ: " + String(x.message || x)); return; }
         }
-        startSession({ agentId, dynamicVariables, onError: (m) => setE(String(m)) });
+        startSession({ agentId, dynamicVariables, ...transcriptHandlers, onError: (m) => setE(String(m)) });
       }}>{on ? "● วางสาย" : `🎙 ${label}`}</button>
       {e && <span className="err">{e}</span>}
       {info && <span className="note">{info}</span>}
