@@ -227,9 +227,25 @@ def test_parse_many_phrases(text):
     assert 0 <= r.json()["branch"]["p_survive"] <= 1
 
 
-def test_parse_unknown_is_helpful_422():
+def test_greeting_is_helpful_422():
     r = c.post("/api/parse", json={"text": "สวัสดี"})
-    assert r.status_code == 422 and "ตัวอย่าง" in r.json()["detail"] or "เช่น" in r.json()["detail"]
+    assert r.status_code == 422 and "เช่น" in r.json()["detail"]
+
+
+@pytest.mark.parametrize("text", ["ถ้าขึ้นราคา", "ถ้าจ้างพนักงานเพิ่ม", "ถ้ากู้เงินมาลงทุน", "ถ้าน้ำท่วมร้าน", "ถ้าคู่แข่งมาเปิดข้างๆ",
+                                  "ถ้าค่าเช่าขึ้น", "ถ้าวัตถุดิบแพงขึ้น", "ถ้าทำโปรโมชั่น", "ถ้าฤดูท่องเที่ยวแย่",
+                                  "ถ้าผมไปเที่ยวญี่ปุ่นหนึ่งเดือน", "what if we sell more coffee"])
+def test_whatif_without_numbers_still_answers(text):
+    r = c.post("/api/parse", json={"text": text})
+    assert r.status_code == 200, text
+    j = r.json()
+    assert 0 <= j["branch"]["p_survive"] <= 1 and j["patch"]["assumptions"]
+
+
+def test_voice_tool_never_returns_error():
+    for t in ["ถ้าน้ำท่วม", "ฮัลโหล", ""]:
+        r = c.post("/api/tools/create_branch", json={"request_text": t})
+        assert r.status_code == 200, t
 
 
 def test_voice_tools_emit_events_and_merge_by_loose_name(isolate_ledger):

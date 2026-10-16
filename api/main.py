@@ -362,11 +362,17 @@ class ToolBranch(BaseModel):
 
 @app.post("/api/tools/create_branch")
 def tool_create_branch(req: ToolBranch):
-    o = parse(ParseReq(text=req.request_text))
+    try:
+        o = parse(ParseReq(text=req.request_text))
+    except HTTPException as e:  # the voice agent must never get an error back: hand it a sentence to say instead
+        return dict(ok=False, say_th="ผมยังไม่ได้ยินสถานการณ์ที่จะทดสอบ ลองบอกเป็น “ถ้า…” เช่น ถ้าขึ้นราคา 8% หรือถ้าเปิดสาขาสอง")
     out = dict(branch_id=o["branch_id"], p_base=round(o["base"]["p_survive"], 3),
                p_branch=round(o["branch"]["p_survive"], 3), delta_p=round(o["delta_p"], 3),
                min_cash_p5_branch=round(o["branch"]["min_cash_pct"]["p5"]),
                trough_month=o["branch"]["trough_month_mode"])
+    out["source"] = o["source"]
+    if o["source"] == "fallback" or any("สมมติ" in a for a in o["patch"].get("assumptions", [])):
+        out["assumptions_th"] = o["patch"].get("assumptions", [])  # agent must read these out
     event("create_branch", f"แตกกิ่ง “{o['patch'].get('name', o['branch_id'])}”",
           dict(out, name=o["patch"].get("name"), assumptions=o["patch"].get("assumptions", []), request=req.request_text))
     return out

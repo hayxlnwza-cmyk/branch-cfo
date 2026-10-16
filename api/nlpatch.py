@@ -18,6 +18,7 @@ EXAMPLES_TH = ("เปิดสาขาสอง · ขึ้นราคา 8%
                "ค่าเช่าเพิ่ม 5000 · ลดต้นทุนวัตถุดิบ 5% · ยอดขายลด 15% · ซื้อเครื่อง 150000 · "
                "ยิงแอด 10000 ต่อเดือน · เจ้าของใส่เงินเพิ่ม 100000 · ปิดหนี้นอกระบบ")
 
+_GREETING = re.compile(r"(สวัสดี|หวัดดี|ขอบคุณ|ครับ|ค่ะ|โอเค|ok|hi|hello|ทดสอบ|test)+")
 _TH_DIGITS = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
 _WORDS = {"หนึ่ง": 1, "สอง": 2, "สาม": 3, "สี่": 4, "ห้า": 5, "หก": 6, "เจ็ด": 7, "แปด": 8, "เก้า": 9, "สิบ": 10}
 _UNIT = {"ล้าน": 1e6, "แสน": 1e5, "หมื่น": 1e4, "พัน": 1e3, "ร้อย": 1e2, "k": 1e3, "m": 1e6}
@@ -204,6 +205,69 @@ def _r_capex(t, params, ctx):
     return dict(name=f"ลงทุน {amt:,.0f}", cash_delta=-amt, assumptions=["จ่ายสดครั้งเดียว ยังไม่คิดผลต่อยอดขาย/ต้นทุน"]), t[:m.start()] + t[m.end():]
 
 
+# ---- fallback layer: the user should always get an answer. Missing numbers get a stated default (shown as an
+# assumption on screen); an unrecognised sentence becomes a labelled +/-10% revenue sensitivity test.
+def _defaults(t, params, ctx):
+    """Intents with no number in the sentence -> default magnitude, always listed in `assumptions`."""
+    R0, F, v = _p(params, "R0", 0.0), _p(params, "F", 0.0), _p(params, "v", 0.4)
+    out = []
+    def has(pat): return re.search(pat, t)
+    if has(r"ปิด(?:ร้าน|สาขา|กิจการ)|หยุด(?:ขาย|กิจการ)|น้ำท่วม|ไฟไหม้|โควิด|ล็อกดาวน์|lockdown"):
+        out.append(dict(name="ยอดขายหายหนัก", add_revenue=[dict(share=-0.5, start=1, ramp=1)],
+                        assumptions=["ไม่ได้ระบุระยะเวลา/ขนาด สมมติยอดขายหาย 50% ตลอด 12 เดือน (เป็นกรณีเลวร้าย)"]))
+    elif has(r"ขึ้นราคา|ปรับราคาขึ้น"):
+        out.append(_r_price("ขึ้นราคา 5%", params, ctx)[0] | dict(name="ขึ้นราคา (สมมติ 5%)"))
+    elif has(r"ลดราคา|โปรโมชั่น|โปรโมชัน|ลดแลกแจก|ส่วนลด"):
+        out.append(_r_price("ลดราคา 10%", params, ctx)[0] | dict(name="ลดราคา/โปร (สมมติ 10%)"))
+    if has(r"(?:จ้าง|รับ|เพิ่ม)(?:พนักงาน|คนงาน|ลูกจ้าง)"):
+        out.append(dict(name="จ้างพนักงานเพิ่ม (สมมติ 1 คน)", add_fixed=[dict(amount=15000.0, start=1)],
+                        assumptions=["ไม่ได้ระบุจำนวน สมมติ 1 คน เงินเดือน 15,000 บาท"]))
+    elif has(r"(?:ปลด|ลด|เลิกจ้าง)(?:พนักงาน|คนงาน|ลูกจ้าง)"):
+        out.append(dict(name="ลดพนักงาน (สมมติ 1 คน)", add_fixed=[dict(amount=-15000.0, start=1)],
+                        assumptions=["ไม่ได้ระบุจำนวน สมมติ 1 คน เงินเดือน 15,000 บาท"]))
+    if has(r"กู้|สินเชื่อ|ยืมเงิน"):
+        amt = round(R0, -3) or 100000.0
+        i, n = 0.18 / 12, 24
+        pmt = amt * i / (1 - (1 + i) ** -n)
+        out.append(dict(name=f"กู้เพิ่ม (สมมติ {amt:,.0f})", cash_delta=amt, debts=[dict(pmt=pmt, start=1, n=n)],
+                        assumptions=[f"ไม่ได้ระบุวงเงิน สมมติเท่ายอดขาย 1 เดือน = {amt:,.0f} บาท ดอก 18%/ปี 24 งวด"]))
+    if has(r"ลงทุน|ซื้อเครื่อง|ซื้ออุปกรณ์|รีโนเวท|ปรับปรุงร้าน|ซ่อม"):
+        amt = round(R0, -3) or 100000.0
+        out.append(dict(name=f"ลงทุน (สมมติ {amt:,.0f})", cash_delta=-amt,
+                        assumptions=[f"ไม่ได้ระบุจำนวนเงิน สมมติเท่ายอดขาย 1 เดือน = {amt:,.0f} บาท จ่ายสดครั้งเดียว"]))
+    if has(r"ยิงแอด|โฆษณา|การตลาด|โปรโมท|ทำแอด"):
+        amt = round(0.05 * R0, -2) or 5000.0
+        share = 1.5 * amt / R0 if R0 > 0 else 0.0
+        out.append(dict(name=f"ทำการตลาด (สมมติ {amt:,.0f}/เดือน)", add_fixed=[dict(amount=amt, start=1)],
+                        add_revenue=[dict(share=share, start=1, ramp=2)],
+                        assumptions=[f"ไม่ได้ระบุงบ สมมติ 5% ของรายได้ = {amt:,.0f}/เดือน และได้ยอดขายคืน 1.5 เท่าของงบ (เดา)"]))
+    if has(r"ค่าเช่า|ค่าไฟ|ค่าน้ำ|ค่าใช้จ่าย|ต้นทุนคงที่|ดอกเบี้ยขึ้น"):
+        up = not has(r"ลด|ถูกลง|ประหยัด")
+        amt = round(0.1 * F, -2) or 3000.0
+        out.append(dict(name=f"ค่าใช้จ่ายคงที่{'เพิ่ม' if up else 'ลด'} (สมมติ 10%)", add_fixed=[dict(amount=amt if up else -amt, start=1)],
+                        assumptions=[f"ไม่ได้ระบุจำนวน สมมติ 10% ของค่าใช้จ่ายคงที่ = {amt:,.0f} บาท/เดือน"]))
+    if has(r"ต้นทุน|วัตถุดิบ|ของแพง"):
+        down = has(r"ลด|ถูกลง|ประหยัด")
+        out.append(dict(name=f"ต้นทุนผันแปร{'ลด' if down else 'เพิ่ม'} (สมมติ 5%)", v_delta=(-1 if down else 1) * v * 0.05,
+                        assumptions=["ไม่ได้ระบุ % สมมติต้นทุนผันแปรเปลี่ยน 5% ของสัดส่วนเดิม"]))
+    if has(r"ยอดขาย|รายได้|ลูกค้า|คู่แข่ง|เศรษฐกิจ|ฤดูกาล|หน้าฝน|หน้าหนาว|เทศกาล|ท่องเที่ยว"):
+        neg = has(r"ลด|ตก|หาย|แย่|ซบเซา|ถดถอย|น้อยลง|คู่แข่ง|ไม่ดี|ฝืด")
+        out.append(dict(name=f"ยอดขาย{'ลด' if neg else 'เพิ่ม'} (สมมติ 10%)", add_revenue=[dict(share=-0.1 if neg else 0.1, start=1, ramp=1)],
+                        assumptions=["ไม่ได้ระบุ % สมมติยอดขายเปลี่ยน 10%"]))
+    return out
+
+
+def fallback_patch(text: str) -> dict:
+    """Last resort: never fail. A plainly-labelled standard stress test, not a guess dressed up as the user's scenario."""
+    t = normalize(text)
+    up = bool(re.search(r"ดีขึ้น|โต|เพิ่ม|ปัง|บูม|ขายดี|รวย", t)) and not re.search(r"ลด|ตก|แย่|หาย|เจ๊ง|ล้ม", t)
+    sh = 0.1 if up else -0.1
+    return dict(name="ทดสอบความไว: ยอดขาย " + ("+10%" if up else "-10%"),
+                add_revenue=[dict(share=sh, start=1, ramp=1)], reason=text,
+                assumptions=["ระบบไม่พบการกระทำ/ตัวเลขที่เจาะจงในประโยคนี้ จึงทดสอบความไวมาตรฐาน (ยอดขายเปลี่ยน 10%) แทน",
+                             "บอกเป็นการกระทำ+ตัวเลข เช่น “ขึ้นราคา 8%” เพื่อได้ผลที่ตรงกับสถานการณ์จริง"])
+
+
 RULES = (_r_second_branch, _r_pay_informal, _r_cost, _r_price, _r_loan, _r_staff, _r_fixed, _r_revenue,
          _r_marketing, _r_inject, _r_capex)
 
@@ -246,6 +310,8 @@ def rule_based(text: str, params: dict, ctx: dict) -> dict | None:
         if p:
             found.append(p)
     if not found:
+        found = _defaults(normalize(text), params, ctx)
+    if not found:
         return None
     patch = merge_patches(found)
     patch["reason"] = text
@@ -282,5 +348,7 @@ def parse(text: str, params: dict, ctx: dict) -> dict:
     if patch is None:
         patch, source = llm_patch(text, params), "llm"
     if patch is None:
-        raise ValueError("ยังไม่เข้าใจประโยคนี้ ระบุเป็นการกระทำ+ตัวเลข เช่น: " + EXAMPLES_TH)
+        if _GREETING.fullmatch(re.sub(r"[\s!?.]+", "", text.lower())) or len(text) < 3:
+            raise ValueError("ยังไม่ใช่สถานการณ์ “ถ้า…” ลองพูดการกระทำ+ตัวเลข เช่น: " + EXAMPLES_TH)
+        patch, source = fallback_patch(text), "fallback"
     return dict(patch=validate(patch), source=source)
