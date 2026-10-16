@@ -3,10 +3,19 @@ U-Hackathon 2026 · แทร็ก AI · ข้อมูลทั้งหม�
 
 ตัวเลขทุกตัวมาจาก `engine/` (numpy, seed ซ้ำได้) ไม่ใช่ LLM — LLM/เสียงแปลคำพูดเป็นพารามิเตอร์และอธิบายผลเท่านั้น
 
+## สำหรับกรรมการ: ดูอะไรได้ใน 2 นาที
+- **เดโมออนไลน์:** https://branch-cfo.onrender.com (เซิร์ฟเวอร์ฟรี หลับได้ ถ้าโหลดช้าครั้งแรกให้รอ ~1 นาที)
+- **ปัญหา:** SME เจ๊งเพราะเงินสดขาด ไม่ใช่เพราะขาดทุน แอปบัญชีบันทึกอดีต ไม่ตอบว่า “ถ้าทำอย่างนี้ จะเกิดอะไร”
+- **ทำอะไร:** ทำนายโอกาสรอดแบบความน่าจะเป็น (Monte Carlo) → แตกกิ่ง “ถ้า…” แล้วเทียบอนาคต (เลขสุ่มชุดเดียวกัน) → เอเจนต์เสียง ElevenLabs โทรตามเงินจริงแล้วตัวเลขบนจอขยับสด → กด merge แล้วหลักฐานการตัดสินใจเป็นไฟล์ใน `ledger/` ที่ commit ขึ้น GitHub
+- **อ่านโค้ดตรงไหนก่อน:** `engine/forecast.py` (สูตร 3.1–3.3), `engine/branch.py` (common random numbers), `engine/debt.py` (APR/EIR จาก flat), `engine/backtest.py`, สูตรทั้งหมดใน `docs/FORMULAS.md`, หลักฐานตัวอย่างใน `ledger/`
+- **หลักการ:** ตัวเลขทุกตัวมาจากโค้ด ไม่ใช่ LLM · เอเจนต์เปิดเผยว่าเป็น AI ทุกสาย ไม่ข่มขู่ มีปุ่มหยุดติดต่อถาวร · ข้อมูลเป็นข้อมูลตัวอย่างสังเคราะห์ ระบุบนจอ · ปุ่ม “⚙ ใส่ข้อมูลจริง” ให้ใช้กับธุรกิจจริงได้
+- **เทสต์:** `python -m pytest -q` (62 ข้อ)
+- **เครื่องมือ AI ที่ใช้สร้าง:** Claude (เขียนโค้ด/เอกสาร), ElevenLabs Agents (เสียงและ tool-calling) — โค้ดทั้งหมดอยู่ในรีโปนี้ commit แรกหลังเริ่มงาน (15 ต.ค. 13:38 น. เวลาไทย)
+
 ## รัน
 ```bash
 pip install -r requirements.txt
-python -m pytest -q engine/tests api          # 20 เทสต์
+python -m pytest -q engine/tests api          # 62 เทสต์
 python data/make_seed.py                      # (ทางเลือก) สร้าง data/seed.json ใหม่ — deterministic
 uvicorn api.main:app --port 8000              # API (+ เสิร์ฟ web/dist ถ้ามี)
 
@@ -44,10 +53,10 @@ cd web && npm install && npm run dev          # UI ที่ :5173 (proxy /api �
 Backtest (บนจอ): coverage ช่วง 80% จริง **75.7%** (400 ชุดจำลอง, 2,400 จุด; เป้า 80%), rolling บนประวัติ 24 ด. 92% (n=24 น้อย), MAPE มัธยฐาน 6.1% เทียบ seasonal-naive 7.9% — **ข้อมูลสังเคราะห์จากโมเดลตระกูลเดียวกัน** วัดได้แค่ estimator/calibration ไม่ใช่ความแม่นยำโลกจริง
 
 ## โครงรีโป
-`engine/` สูตรทั้งหมด + `tests/` · `api/` FastAPI + tool endpoints ของเอเจนต์เสียง · `web/` React · `agents/` ElevenLabs agents-as-code · `data/` seed สังเคราะห์ · `ledger/` หลักฐานการตัดสินใจ · `.github/workflows/` backtest (gate), agent-tests (lint guardrail), deploy-agent · `docs/FORMULAS.md` สูตรและสมมติฐาน
+`engine/` สูตรทั้งหมด + `tests/` · `api/` FastAPI + tool endpoints ของเอเจนต์เสียง · `web/` React · `agents/` ElevenLabs agents-as-code · `data/` seed สังเคราะห์ · `ledger/` หลักฐานการตัดสินใจ · `ci-workflows-disabled/` backtest (gate), agent-tests (lint guardrail), deploy-agent — จอดไว้เพราะ token ที่ใช้ push ไม่มีสิทธิ์ workflow (ย้ายไป `.github/workflows/` เมื่อให้สิทธิ์) · `docs/FORMULAS.md` สูตรและสมมติฐาน
 
 ## ยังไม่ได้ทำ / ข้อจำกัดที่ต้องรู้ก่อนขึ้นเวที
-- เสียง (ElevenLabs) **ยังไม่ได้ทดสอบ** — ไม่มี API key/เอเจนต์จริงในเซสชันสร้าง ต้องทดสอบเสียงไทย ความหน่วง และ tool-calling ก่อนเป็นอย่างแรก
+- เสียง (ElevenLabs): ทีมทดสอบกับเอเจนต์จริงแล้ว (ที่ปรึกษาตอบถูกต้องจาก tool) แต่ยังไม่ได้วัดความหน่วงอย่างเป็นระบบ; เอเจนต์สร้างในหน้า ElevenLabs ตาม `docs/VOICE_SETUP.md` ไม่ได้ push ผ่าน CLI
 - OCR สลิป/สมุดบัญชียังไม่ทำ (เดโมใช้ข้อมูลที่ป้อนไว้ตามสเปก)
 - `agent-tests.yml` เป็น lint guardrail ของพรอมต์ (deterministic) ยังไม่ได้จำลองบทสนทนากับเอเจนต์จริง
 - เพดานดอกเบี้ย 15% / 36% เป็นค่าอ้างอิงจากสื่อ ต้องให้ผู้รู้ตรวจก่อนพูดบนเวที และตรวจกฎหมายทวงถามหนี้/PDPA
