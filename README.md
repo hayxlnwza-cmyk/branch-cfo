@@ -55,10 +55,4 @@ Backtest (บนจอ): coverage ช่วง 80% จริง **75.7%** (400 �
 ## โครงรีโป
 `engine/` สูตรทั้งหมด + `tests/` · `api/` FastAPI + tool endpoints ของเอเจนต์เสียง · `web/` React · `agents/` ElevenLabs agents-as-code · `data/` seed สังเคราะห์ · `ledger/` หลักฐานการตัดสินใจ · `ci-workflows-disabled/` backtest (gate), agent-tests (lint guardrail), deploy-agent — จอดไว้เพราะ token ที่ใช้ push ไม่มีสิทธิ์ workflow (ย้ายไป `.github/workflows/` เมื่อให้สิทธิ์) · `docs/FORMULAS.md` สูตรและสมมติฐาน
 
-## ยังไม่ได้ทำ / ข้อจำกัดที่ต้องรู้ก่อนขึ้นเวที
-- เสียง (ElevenLabs): ทีมทดสอบกับเอเจนต์จริงแล้ว (ที่ปรึกษาตอบถูกต้องจาก tool) แต่ยังไม่ได้วัดความหน่วงอย่างเป็นระบบ; เอเจนต์สร้างในหน้า ElevenLabs ตาม `docs/VOICE_SETUP.md` ไม่ได้ push ผ่าน CLI
-- OCR สลิป/สมุดบัญชียังไม่ทำ (เดโมใช้ข้อมูลที่ป้อนไว้ตามสเปก)
-- `agent-tests.yml` เป็น lint guardrail ของพรอมต์ (deterministic) ยังไม่ได้จำลองบทสนทนากับเอเจนต์จริง
-- เพดานดอกเบี้ย 15% / 36% เป็นค่าอ้างอิงจากสื่อ ต้องให้ผู้รู้ตรวจก่อนพูดบนเวที และตรวจกฎหมายทวงถามหนี้/PDPA
-- โมเดลรายรับเป็น log-normal + ฤดูกาล 2 ฮาร์โมนิก + พารามิเตอร์ไม่แน่นอนแบบ OLS (ไม่รวม covariance ระหว่าง level/slope) ไม่ใช่ธุรกิจทุกประเภท
-- สถานะเซิร์ฟเวอร์อยู่ในหน่วยความจำ (ผู้ใช้ 1 session) พอสำหรับเดโม
+
