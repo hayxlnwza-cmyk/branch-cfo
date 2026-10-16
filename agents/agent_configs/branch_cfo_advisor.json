@@ -3,7 +3,7 @@
   "conversation_config": {
     "agent": {
       "language": "th",
-      "first_message": "สวัสดีค่ะ ฉันคือ Branch CFO ผู้ช่วย AI ด้านการเงินของร้านคุณ อยากให้ช่วยดูเรื่องอะไรคะ",
+      "first_message": "สวัสดีครับ ผมคือ Branch CFO ผู้ช่วย AI ด้านการเงินของร้านคุณ อยากให้ช่วยดูเรื่องอะไรครับ",
       "dynamic_variables": {
         "dynamic_variable_placeholders": {}
       },

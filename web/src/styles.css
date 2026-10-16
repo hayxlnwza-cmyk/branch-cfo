@@ -58,7 +58,7 @@ body::before{content:'';position:fixed;inset:0;z-index:-1;background:url("data:i
 .survive,.chartcard,.card{backdrop-filter:blur(3px)}
 
 .badge.ok{color:var(--acc2);border-color:var(--acc);background:#e3f1fb}
-.toast{position:fixed;right:16px;bottom:16px;max-width:460px;z-index:50;background:var(--panel);border:2px solid var(--br);border-radius:14px;padding:12px 14px;box-shadow:0 8px 28px #134f7c33;cursor:pointer;backdrop-filter:blur(6px)}
+.toast{position:fixed;right:16px;top:16px;max-width:460px;z-index:50;background:var(--panel);border:2px solid var(--br);border-radius:14px;padding:12px 14px;box-shadow:0 8px 28px #134f7c33;cursor:pointer;backdrop-filter:blur(6px)}
 .toast p{margin:4px 0}.evh{display:flex;justify-content:space-between;gap:10px;margin-bottom:4px}
 .evt{border-top:1px solid var(--line);padding:8px 0;transition:background .5s}.evt p{margin:3px 0}
 .evt.fresh{background:var(--yel2);border-left:4px solid var(--br);padding-left:10px;border-radius:6px}
@@ -85,3 +85,6 @@ input.reason{width:100%;margin-top:10px}
 .tr-who{display:block;font-size:11px;opacity:.7;margin-bottom:1px}
 .tr-fab{position:fixed;right:16px;bottom:16px;z-index:50;background:var(--panel)}
 @media(max-width:600px){.tr-win{right:8px;left:8px;width:auto;bottom:8px}}
+.tr-notice{padding:7px 12px;background:var(--yel2);border-bottom:1px solid var(--line);font-size:12.5px;color:var(--warn)}
+.focus{animation:fcs 2.4s ease-out}
+@keyframes fcs{0%,40%{box-shadow:0 0 0 4px var(--br),0 6px 24px #f26a3d55}100%{box-shadow:0 1px 3px #1f78b822}}

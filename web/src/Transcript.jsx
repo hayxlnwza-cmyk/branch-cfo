@@ -1,19 +1,20 @@
 import React, { useEffect, useRef, useSyncExternalStore } from "react";
 
 // Tiny external store so every <Voice> instance feeds the same window.
-let state = { lines: [], mode: "idle", open: false, live: false, seq: 0 };
+let state = { lines: [], mode: "idle", open: false, live: false, seq: 0, notice: "" };
 const subs = new Set();
 const set = (p) => { state = { ...state, ...p }; subs.forEach((f) => f()); };
 const useStore = () => useSyncExternalStore((f) => (subs.add(f), () => subs.delete(f)), () => state);
 
 export const transcript = {
   start: () => set({ lines: [], mode: "listening", open: true, live: true }),
+  notice: (notice) => set({ notice, open: true }),
   end: () => set({ live: false, mode: "idle" }),
   mode: (mode) => set({ mode }),
   add: ({ role, message }) => {
     if (!message) return;
     const seq = state.seq + 1;
-    set({ lines: [...state.lines, { id: seq, role, text: message }], seq, open: true });
+    set({ lines: [...state.lines, { id: seq, role, text: message }], seq, open: true, notice: "" });
   },
   open: () => set({ open: true }),
   close: () => set({ open: false }),
@@ -28,7 +29,7 @@ export const transcriptHandlers = {
 };
 
 export function TranscriptWindow() {
-  const { lines, mode, open, live } = useStore();
+  const { lines, mode, open, live, notice } = useStore();
   const box = useRef(null);
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines, open]);
   if (!open) {
@@ -42,8 +43,9 @@ export function TranscriptWindow() {
         <span className={`tr-st ${live ? mode : ""}`}>{live && <i />}{status}</span>
         <button className="tr-x" onClick={transcript.close} aria-label="ซ่อน">×</button>
       </div>
+      {notice && <div className="tr-notice">{notice}</div>}
       <div className="tr-body" ref={box}>
-        {lines.length === 0 && <p className="note">รอการสนทนา…</p>}
+        {lines.length === 0 && live && <p className="note">กำลังเชื่อมต่อ… ถ้าเอเจนต์ยังไม่พูดใน 5 วินาที ให้ลองพูดทักก่อน</p>}
         {lines.map((l) => (
           <div key={l.id} className={`tr-b ${l.role === "user" ? "me" : "ai"}`}>
             <span className="tr-who">{l.role === "user" ? "คุณ" : "เอเจนต์ (AI)"}</span>

@@ -4,12 +4,23 @@ import { api } from "./api.js";
 import FanChart from "./FanChart.jsx";
 import DataPanel from "./DataPanel.jsx";
 import { ActivityPanel, Toast } from "./Activity.jsx";
-import { TranscriptWindow, transcriptHandlers } from "./Transcript.jsx";
+import { TranscriptWindow, transcriptHandlers, transcript } from "./Transcript.jsx";
 
 const baht = (v) => Math.round(v).toLocaleString("th-TH");
 const pct = (v, d = 0) => `${(v * 100).toFixed(d)}%`;
 const ADVISOR = import.meta.env.VITE_ELEVENLABS_ADVISOR_AGENT_ID;
 const COLLECTOR = import.meta.env.VITE_ELEVENLABS_COLLECTOR_AGENT_ID;
+
+const PRIO = { merge_branch: 5, create_branch: 4, record_promise: 4, stop_contact: 4, get_debt_report: 3, list_debtors: 3, get_forecast: 1 };
+const SECTION = { get_forecast: "sec-forecast", create_branch: "sec-branch", merge_branch: "sec-ledger", get_debt_report: "sec-debt",
+  list_debtors: "sec-collect", record_promise: "sec-collect", stop_contact: "sec-collect" };
+function focusSection(tool) {          // scroll to + highlight the card for the topic being discussed
+  const el = document.getElementById(SECTION[tool] || "");
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.remove("focus"); void el.offsetWidth; el.classList.add("focus");
+  setTimeout(() => el.classList.remove("focus"), 2500);
+}
 
 export default function App() {
   return (
@@ -40,10 +51,12 @@ function Dashboard() {
   const ver = useRef(-1);
   const prevP = useRef(null);
 
+  const seq = useRef(0);
+  const toastRank = useRef({ id: 0, prio: 0, at: 0 });
   const refresh = useCallback(async () => {
+    const my = ++seq.current;
     const [s, f] = await Promise.all([api.state(), api.forecast()]);
     ver.current = s.version;
-    setSt(s);
     const evs = s.events || [];
     const maxId = evs.reduce((m, e) => Math.max(m, e.id), 0);
     if (lastEv.current === null) lastEv.current = maxId;          // first load: don't replay old events
@@ -51,29 +64,36 @@ function Dashboard() {
       const fresh = evs.filter((e) => e.id > lastEv.current);
       lastEv.current = Math.max(lastEv.current, maxId);
       if (fresh.length) {
-        const last = fresh[fresh.length - 1];
-        setToast(last); setFreshId(last.id);
-        setTimeout(() => setToast((t) => (t && t.id === last.id ? null : t)), 15000);
-        setTimeout(() => setFreshId((x) => (x === last.id ? 0 : x)), 9000);
-        const cb = [...fresh].reverse().find((e) => e.tool === "create_branch");
-        if (cb && cb.data?.branch_id) {            // voice agent made a branch -> show it on screen
-          cmpId.current = cb.data.branch_id;
+        // show the event that matches the TOPIC (highest priority, latest among equals), not merely the last call
+        const top = fresh.reduce((b, e) => (PRIO[e.tool] ?? 2) >= (PRIO[b.tool] ?? 2) ? e : b);
+        const r = toastRank.current, now = Date.now(), pr = PRIO[top.tool] ?? 2;
+        if (pr >= r.prio || now - r.at > 8000) {
+          toastRank.current = { id: top.id, prio: pr, at: now };
+          setToast(top); setFreshId(top.id);
+          setTimeout(() => setToast((t) => (t && t.id === top.id ? null : t)), 15000);
+          setTimeout(() => setFreshId((x) => (x === top.id ? 0 : x)), 9000);
+          setTimeout(() => focusSection(top.tool), 350);           // after React paints the new data
         }
+        const cb = [...fresh].reverse().find((e) => e.tool === "create_branch");
+        if (cb && cb.data?.branch_id) cmpId.current = cb.data.branch_id;   // voice agent made a branch -> show it
       }
     }
+    if (my !== seq.current) return;                                   // a newer refresh superseded this one
+    setSt(s);
     if (prevP.current != null && Math.abs(prevP.current - f.p_survive) > 0.001) {
       setFlash(f.p_survive > prevP.current ? "up" : "down");
       setTimeout(() => setFlash(null), 1800);
     }
     prevP.current = f.p_survive;
     setBase(f);
-    setDebt(await api.debt());
+    const d = await api.debt();
     const cur = cmpId.current;
-    if (cur && s.branches[cur]) {
-      const c = await api.compare(cur);
-      setCmp(c);
-      setBranchFc(c.branch);
-    } else if (cur) { cmpId.current = null; setCmp(null); setBranchFc(null); }
+    let c = null;
+    if (cur && s.branches[cur]) c = await api.compare(cur);
+    if (my !== seq.current) return;
+    setDebt(d);
+    if (c) { setCmp(c); setBranchFc(c.branch); }
+    else if (cur) { cmpId.current = null; setCmp(null); setBranchFc(null); }
   }, []);
 
   useEffect(() => { cmpId.current = cmp?.branch_id || null; }, [cmp]);
@@ -121,7 +141,7 @@ function Dashboard() {
         </div>
       </header>
 
-      <section className="hero">
+      <section className="hero" id="sec-forecast">
         <div className={`survive ${flash === "up" ? "up" : flash === "down" ? "down" : ""}`}>
           <div className="lbl">โอกาสรอด 12 เดือน (ฐาน)</div>
           <div className="big">{pct(base.p_survive)}</div>
@@ -147,7 +167,7 @@ function Dashboard() {
       <section className="grid">
         <ActivityPanel events={st.events} freshId={freshId} />
         <DataPanel synthetic={st.synthetic} onApplied={async () => { setCmp(null); setBranchFc(null); setLender(null); setBt(null); prevP.current = null; await refresh(); api.backtest().then(setBt).catch(() => {}); }} />
-        <div className="card">
+        <div className="card" id="sec-branch">
           <h2>แตกกิ่ง “ถ้า…”</h2>
           <form onSubmit={(e) => { e.preventDefault(); ask(text); }} className="askrow">
             <input value={text} onChange={(e) => setText(e.target.value)} placeholder="เช่น ถ้าเปิดสาขาสอง / ถ้าขึ้นราคา 8% / กู้ 200000" />
@@ -195,7 +215,7 @@ function Dashboard() {
           })()}
         </div>
 
-        <div className="card">
+        <div className="card" id="sec-debt">
           <h2>Debt Doctor</h2>
           <table className="debt">
             <thead><tr><th>หนี้</th><th>APR</th><th>EIR</th><th>ค่างวด</th><th>รีไฟแนนซ์ (20%/24ด.)</th></tr></thead>
@@ -228,7 +248,7 @@ function Dashboard() {
           ) : <p className="note">กำลังคำนวณ…</p>}
         </div>
 
-        <div className="card wide">
+        <div className="card wide" id="sec-ledger">
           <h2>หลักฐาน (ledger) และข้อมูลสำหรับผู้ให้สินเชื่อ</h2>
           <div className="ledgerrow">
             <ul className="ledger">
@@ -271,7 +291,7 @@ function Collections({ st, base, refresh, collectorId }) {
     refresh();
   };
   return (
-    <div className="card">
+    <div className="card" id="sec-collect">
       <h2>ลงมือ: โทรตามเงิน</h2>
       <table className="coll">
         <thead><tr><th>ลูกหนี้</th><th>ยอดค้าง</th><th>คาดรับ</th><th>โอกาสได้</th><th></th></tr></thead>
@@ -302,23 +322,53 @@ function CollectCall({ c, agentId }) {
   return <Voice agentId={agentId} before={before} compact label="โทร (web call)" dynamicVariables={{ business_name: "ร้านอาหารตัวอย่าง", customer_id: c.id, customer_name: c.name, amount: String(c.amount) }} />;
 }
 
+const reasonTh = (d) => d?.reason === "error" ? (d.message || "เกิดข้อผิดพลาดในการเชื่อมต่อ") : d?.reason === "agent" ? (d.closeReason || "เซิร์ฟเวอร์เอเจนต์ตัดสาย") : "";
+const savedMode = () => { try { return sessionStorage.getItem("brcfo_mode") === "websocket" ? "websocket" : "webrtc"; } catch { return "webrtc"; } };
+const saveMode = (m) => { try { sessionStorage.setItem("brcfo_mode", m); } catch {} };
+
 function Voice({ agentId, label, compact, dynamicVariables, before }) {
   const { startSession, endSession } = useConversationControls();
   const { status } = useConversationStatus();
   const [e, setE] = useState("");
   const [info, setInfo] = useState("");
+  const run = useRef({ t0: 0, agent: 0, retried: false });
   const on = status === "connected" || status === "connecting";
+  const begin = (mode) => {
+    const r = run.current; r.t0 = Date.now(); r.agent = 0;
+    startSession({
+      agentId, dynamicVariables, connectionType: mode, ...transcriptHandlers,
+      onMessage: (m) => { if (m.role === "agent") r.agent++; transcriptHandlers.onMessage(m); },
+      onDisconnect: (d) => {
+        transcriptHandlers.onDisconnect(d);
+        const early = Date.now() - r.t0 < 10000 && r.agent === 0 && d?.reason !== "user";
+        if (early && mode === "webrtc" && !r.retried) {          // WebRTC is often blocked on venue wifi -> retry over WebSocket
+          r.retried = true; saveMode("websocket");
+          transcript.notice("สายหลุดตอนเริ่ม (อาจเพราะเครือข่ายบล็อก WebRTC) กำลังลองใหม่ด้วยโหมดสำรอง…");
+          setTimeout(() => begin("websocket"), 500);
+        } else if (early) {
+          const m = "เอเจนต์ตัดสายทันทีโดยไม่พูด: " + (reasonTh(d) || "ไม่ทราบสาเหตุ") + " · เช็ก Agent ID และเสียง (voice) ของเอเจนต์ใน ElevenLabs";
+          setE(m); transcript.notice(m);
+        } else if (d?.reason === "error") { setE(reasonTh(d)); transcript.notice(reasonTh(d)); }
+      },
+      onError: (m) => { setE(String(m)); transcript.notice(String(m)); },
+    });
+  };
   if (!agentId) return compact ? null : <p className="note">ยังไม่ได้ตั้ง VITE_ELEVENLABS_*_AGENT_ID → ใช้ช่องพิมพ์แทนเสียง (โหมดสำรอง)</p>;
   return (
     <>
       <button className={on ? "live" : "ghost"} onClick={async () => {
         if (on) return endSession();
-        setE(""); setInfo("");
+        setE(""); setInfo(""); transcript.notice("");
+        try {                                                     // ask for the mic first so a block shows a clear message
+          const ms = await navigator.mediaDevices.getUserMedia({ audio: true });
+          ms.getTracks().forEach((t) => t.stop());
+        } catch (x) { setE("เบราว์เซอร์ไม่ให้ใช้ไมโครโฟน: กดไอคอนแม่กุญแจข้าง URL → อนุญาตไมโครโฟน แล้วลองใหม่"); return; }
         if (before) {
           try { const g = await before(); if (!g.ok) { setE(g.msg); return; } if (g.msg) setInfo(g.msg); }
           catch (x) { setE("ตรวจกฎก่อนโทรไม่สำเร็จ: " + String(x.message || x)); return; }
         }
-        startSession({ agentId, dynamicVariables, ...transcriptHandlers, onError: (m) => setE(String(m)) });
+        run.current.retried = false;
+        begin(savedMode());
       }}>{on ? "● วางสาย" : `🎙 ${label}`}</button>
       {e && <span className="err">{e}</span>}
       {info && <span className="note">{info}</span>}
